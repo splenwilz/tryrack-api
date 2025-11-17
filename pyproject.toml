@@ -1,0 +1,25 @@
+[project]
+name = "tryrack_api"
+version = "0.1.0"
+description = "FastAPI application"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "asyncpg>=0.30.0",
+    "authlib>=1.6.5",
+    "fastapi>=0.121.0",
+    "greenlet>=3.2.4",
+    "httpx>=0.28.1",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.11.0",
+    "sqlalchemy>=2.0.44",
+    "uvicorn[standard]>=0.38.0",
+    "workos>=5.0.0",
+]
+
+# Development dependencies
+[project.optional-dependencies]
+dev = [
+    "alembic>=1.17.1",
+    "psycopg2-binary>=2.9.11",
+]
