@@ -6,8 +6,10 @@ import logging
 import time
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from botocore.exceptions import ClientError
 from app.api.v1.schemas.auth import WorkOSUserResponse
 from app.api.v1.schemas.storage import ImageUploadResponse, PresignedUploadResponse
+from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.services.storage import get_storage_service
 
@@ -108,10 +110,18 @@ async def get_presigned_upload_url(
         )
         
     except ValueError as e:
+        # ValueError indicates client-side validation issues (bad folder, invalid expiration, etc.)
         logger.warning(f"Presigned URL generation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
+        ) from e
+    except ClientError as e:
+        # ClientError indicates backend/S3 issues - map to HTTP 500
+        logger.error(f"S3 error generating presigned URL: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate presigned URL due to a server error"
         ) from e
     except Exception as e:
         logger.error(
@@ -171,7 +181,8 @@ async def upload_image(
             - 500 for upload failures
     """
     start_time = time.time()
-    print(f"[DEBUG] Image upload started at {start_time:.3f}")
+    if settings.ENVIRONMENT == "development":
+        print(f"[DEBUG] Image upload started at {start_time:.3f}")
     
     # Validate file type (JPG only)
     if not file.filename:
@@ -189,14 +200,16 @@ async def upload_image(
         )
     
     validation_time = time.time()
-    print(f"[DEBUG] Validation took {(validation_time - start_time) * 1000:.2f}ms")
+    if settings.ENVIRONMENT == "development":
+        print(f"[DEBUG] Validation took {(validation_time - start_time) * 1000:.2f}ms")
     
     # Validate file size (max 5MB for small files)
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
     read_start = time.time()
     file_content = await file.read()
     read_time = time.time()
-    print(f"[DEBUG] File read took {(read_time - read_start) * 1000:.2f}ms, size: {len(file_content)} bytes")
+    if settings.ENVIRONMENT == "development":
+        print(f"[DEBUG] File read took {(read_time - read_start) * 1000:.2f}ms, size: {len(file_content)} bytes")
     
     if len(file_content) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -211,38 +224,53 @@ async def upload_image(
         )
     
     before_service_time = time.time()
-    print(f"[DEBUG] Time before StorageService get: {(before_service_time - start_time) * 1000:.2f}ms")
+    if settings.ENVIRONMENT == "development":
+        print(f"[DEBUG] Time before StorageService get: {(before_service_time - start_time) * 1000:.2f}ms")
     
     storage_service = get_storage_service()
     
     service_get_time = time.time()
-    print(f"[DEBUG] StorageService get took {(service_get_time - before_service_time) * 1000:.2f}ms")
+    if settings.ENVIRONMENT == "development":
+        print(f"[DEBUG] StorageService get took {(service_get_time - before_service_time) * 1000:.2f}ms")
+    
+    # Normalize extension: .jpeg -> jpeg, .jpg -> jpg (remove leading dot)
+    normalized_extension = file_extension.lstrip('.')
     
     try:
         # Upload to S3 - pass content directly to avoid reading twice
         upload_start = time.time()
-        print(f"[DEBUG] Starting S3 upload at {upload_start:.3f}")
+        if settings.ENVIRONMENT == "development":
+            print(f"[DEBUG] Starting S3 upload at {upload_start:.3f}")
         url = await storage_service.upload_image(
             file_content=file_content,
             folder=folder,
-            file_extension="jpg"
+            file_extension=normalized_extension
         )
         upload_end = time.time()
         upload_duration = (upload_end - upload_start) * 1000
-        print(f"[DEBUG] S3 upload completed in {upload_duration:.2f}ms")
+        if settings.ENVIRONMENT == "development":
+            print(f"[DEBUG] S3 upload completed in {upload_duration:.2f}ms")
         
         total_time = (upload_end - start_time) * 1000
-        print(f"[DEBUG] Total upload time: {total_time:.2f}ms")
+        if settings.ENVIRONMENT == "development":
+            print(f"[DEBUG] Total upload time: {total_time:.2f}ms")
         logger.info(f"Image uploaded successfully by user {current_user.id}: {url} (took {total_time:.2f}ms)")
         return ImageUploadResponse(url=url)
         
     except ValueError as e:
+        # ValueError indicates client-side validation issues (empty file, invalid folder, etc.)
         logger.warning(f"Image upload validation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         ) from e
-        
+    except ClientError as e:
+        # ClientError indicates backend/S3 issues - map to HTTP 500
+        logger.error(f"S3 error uploading image: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload image due to a server error"
+        ) from e
     except Exception as e:
         logger.error(
             f"Unexpected error uploading image for user {current_user.id}: {type(e).__name__}: {e}",

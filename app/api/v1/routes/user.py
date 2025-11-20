@@ -1,5 +1,4 @@
 import sys
-import sys
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from workos.exceptions import BadRequestException
@@ -408,90 +407,4 @@ async def delete_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while deleting the user"
         ) from e
-
-
-@router.post(
-    "/profile",
-    response_model=UserProfileResponse,
-    summary="Create user profile",
-    status_code=status.HTTP_201_CREATED,
-    responses={
-        201: {"description": "Profile created successfully"},
-        400: {"description": "Invalid request data or validation error"},
-        401: {"description": "Unauthorized - authentication required"},
-        403: {"description": "Forbidden - users can only create their own profile"},
-        404: {"description": "User not found"},
-        409: {"description": "Profile already exists for this user"},
-        500: {"description": "Internal server error"}
-    }
-)
-async def create_user_profile(
-    user_profile_data: UserProfileCreate,
-    current_user: WorkOSUserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-) -> UserProfileResponse:
-    """
-    Create a user profile for the authenticated user.
-    
-    **Authorization**: Users can only create their own profile (implicitly uses the authenticated user's ID).
-    
-    **NB**: For measurements, gender-specific body measurements are stored in JSON format. 
-    Keys should include units (e.g., 'bust_cm', 'chest_cm', 'hips_cm', 'shoulder_width_cm'). 
-    Example: {'bust_cm': 90.0, 'hips_cm': 95.0} for female or {'chest_cm': 100.0, 'shoulder_width_cm': 45.0} for male**
-
-    Args:
-        user_profile_data: User profile data to create
-        current_user: Authenticated user (from JWT token)
-        db: Database session
-
-    Returns:
-        Created UserProfileResponse object
-        
-    """
-    user_service = UserService()
-    
-    try:
-        user_profile = await user_service.create_user_profile(
-            db, 
-            current_user.id, 
-            user_profile_data
-        )
-        logger.info(f"Profile created successfully for user: {current_user.id}")
-        return user_profile
-        
-    except ValueError as e:
-        # User doesn't exist (from service validation)
-        logger.warning(f"Profile creation failed - user not found: {current_user.id}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        ) from e
-        
-    except IntegrityError as e:
-        # Profile already exists (unique constraint violation)
-        error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
-        if "uq_user_profiles_user_id" in error_str or "unique constraint" in error_str.lower():
-            logger.warning(f"Profile already exists for user: {current_user.id}")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A profile already exists for this user. Use PATCH to update it instead."
-            ) from e
-        # Other integrity errors (e.g., foreign key violation)
-        logger.error(f"Database integrity error creating profile: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to create profile due to a data conflict"
-        ) from e
-        
-    except Exception as e:
-        # Unexpected errors
-        logger.error(
-            f"Unexpected error creating profile for user {current_user.id}: {type(e).__name__}: {e}",
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while creating the profile"
-        ) from e
-
 
