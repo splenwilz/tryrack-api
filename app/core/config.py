@@ -55,6 +55,33 @@ class Settings(BaseSettings):
         description="Comma-separated list of allowed redirect URIs for OAuth"
     )
     
+    # AWS S3 Configuration
+    AWS_ACCESS_KEY_ID: str = Field(
+        ...,
+        description="AWS access key ID for S3"
+    )
+    AWS_SECRET_ACCESS_KEY: str = Field(
+        ...,
+        description="AWS secret access key for S3"
+    )
+    AWS_REGION: str = Field(
+        default="us-east-1",
+        description="AWS region for S3 bucket"
+    )
+    AWS_S3_BUCKET_NAME: str = Field(
+        ...,
+        description="S3 bucket name for storing uploaded images"
+    )
+    AWS_S3_BASE_URL: str | None = Field(
+        None,
+        description="Base URL for S3 objects (e.g., https://bucket.s3.amazonaws.com). If not set, will be generated from bucket name and region."
+    )
+
+    ENVIRONMENT: str = Field(
+        default="development",
+        description="Environment name"
+    )  
+    
     @property
     def allowed_redirect_uris_list(self) -> list[str]:
         """

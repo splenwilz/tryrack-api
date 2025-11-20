@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from workos.exceptions import BadRequestException, EmailVerificationRequiredException, NotFoundException
 
 from app.api.v1.schemas.auth import AuthorizationRequest, AuthorizationUrlResponse, EmailVerificationRequiredResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, LoginResponse, OAuthCallbackRequest, RefreshTokenRequest, RefreshTokenResponse, ResetPasswordRequest, SignupRequest, SignupResponse, VerifyEmailRequest, VerifyEmailResponse, WorkOSAuthorizationRequest, WorkOSLoginRequest, WorkOSRefreshTokenRequest, WorkOSResetPasswordRequest, WorkOsVerifyEmailRequest
-from app.api.v1.schemas.user import WorkOSUserResponse
+from app.api.v1.schemas.user import AuthUserResponse
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_auth_service
@@ -112,25 +112,27 @@ async def signup(
     summary="Sign in a user with email and password",
     status_code=status.HTTP_200_OK
 )
-async def login(login_request: LoginRequest, request: Request) -> Union[LoginResponse, EmailVerificationRequiredResponse]:
+async def login(
+    login_request: LoginRequest, 
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> Union[LoginResponse, EmailVerificationRequiredResponse]:
     """
     Sign in a user with email and password.
 
     If the user is not verified, returns an `EmailVerificationRequiredResponse`
     containing a `pending_authentication_token` and `email_verification_id`.
-    These are used with the code sent to the user’s email to complete verification
+    These are used with the code sent to the user's email to complete verification
     through the `verify-email` endpoint.
 
     Args:
         login_request (LoginRequest): User credentials.
         request (Request): Current HTTP request context.
+        db: Database session
 
     Returns:
         Union[LoginResponse, EmailVerificationRequiredResponse]
     """
-
-
-    
     auth_service = get_auth_service()
     
     try:
@@ -141,7 +143,7 @@ async def login(login_request: LoginRequest, request: Request) -> Union[LoginRes
             user_agent=request.headers.get("user-agent") or ""
         )
         
-        return await auth_service.login(login_request=workos_login_request)
+        return await auth_service.login(login_request=workos_login_request, db=db)
     
     except EmailVerificationRequiredException as e:
         response_data = e.response_json
@@ -206,12 +208,17 @@ async def login(login_request: LoginRequest, request: Request) -> Union[LoginRes
     summary="Verify an email address",
     status_code=status.HTTP_200_OK
     )
-async def verify_email(verify_email_request: VerifyEmailRequest, request: Request):
+async def verify_email(
+    verify_email_request: VerifyEmailRequest, 
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
     """This endpoint is used to verify an email address.
 
     Args:
         verify_email_request: WorkOsVerifyEmailRequest
         request: Request
+        db: Database session
 
     Returns:
         VerifyEmailResponse
@@ -224,7 +231,7 @@ async def verify_email(verify_email_request: VerifyEmailRequest, request: Reques
             ip_address=request.client.host if request.client else "",
             user_agent=request.headers.get("user-agent") or ""
         )
-        return await auth_service.verify_email(verify_email_request=workos_verify_email_request)
+        return await auth_service.verify_email(verify_email_request=workos_verify_email_request, db=db)
     except BadRequestException as e:
         error_code = getattr(e, "code", None)
         error_description = getattr(e, "error_description", "") or ""
@@ -316,28 +323,31 @@ async def forgot_password(forgot_password_request: ForgotPasswordRequest) -> For
 
 @router.post(
     "/reset-password",
-    response_model=WorkOSUserResponse,
+    response_model=AuthUserResponse,
     summary="Reset password",
     status_code=status.HTTP_200_OK
 )
-async def reset_password(reset_password_request: ResetPasswordRequest) -> WorkOSUserResponse:
+async def reset_password(
+    reset_password_request: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+) -> AuthUserResponse:
     """
     Reset a user's password.
 
     Args:
         reset_password_request (ResetPasswordRequest): Reset password request.
+        db: Database session
 
     Returns:
-        WorkOSUserResponse: User information
+        AuthUserResponse: User information including is_onboarded
     """
-
     auth_service = get_auth_service()
     try:
         workos_reset_password_request = WorkOSResetPasswordRequest(
             token=reset_password_request.token,
             new_password=reset_password_request.new_password
         )
-        return await auth_service.reset_password(reset_password_request=workos_reset_password_request)
+        return await auth_service.reset_password(reset_password_request=workos_reset_password_request, db=db)
     except BadRequestException as e:
         error_code = getattr(e, 'code', None)
         error_description = getattr(e, 'error_description', '')
@@ -424,19 +434,23 @@ async def authorize(authorization_request: AuthorizationRequest) -> Authorizatio
     summary="Exchange OAuth2 code for access token and refresh token",
     status_code=status.HTTP_200_OK
 )
-async def callback(callback_request: OAuthCallbackRequest) -> LoginResponse:
+async def callback(
+    callback_request: OAuthCallbackRequest,
+    db: AsyncSession = Depends(get_db)
+) -> LoginResponse:
     """
     Exchange an OAuth2 code for access and refresh token.
 
     Args:
         callback_request (OAuthCallbackRequest): Callback request.
+        db: Database session
 
     Returns:
-        LoginResponse: Access token and refresh token
+        LoginResponse: Access token and refresh token with user info including is_onboarded
     """
     auth_service = get_auth_service()
     try:
-        return await auth_service.oauth2_callback(code=callback_request.code)
+        return await auth_service.oauth2_callback(code=callback_request.code, db=db)
     except BadRequestException as e:
         error_code = getattr(e, 'code', None)
         error_description = getattr(e, 'error_description', '')

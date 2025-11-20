@@ -108,6 +108,9 @@ async def get_current_user(
         )
         
         logger.debug(f"User fetched: {user.id} ({user.email})")
+        import sys
+        sys.stdout.write(f"[DEBUG] get_current_user returning user: id='{user.id}', email='{user.email}'\n")
+        sys.stdout.flush()
         return user
         
     except ValueError as e:

@@ -12,6 +12,7 @@ from alembic import context
 # Import Base and models for autogenerate support
 from app.core.database import Base
 from app.models import Task, User  # Import all models here so Alembic can detect them
+from app.models.user import UserProfile  # Import UserProfile for migration detection
 
 # This is the Alembic Config object
 config = context.config

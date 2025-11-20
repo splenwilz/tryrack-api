@@ -7,7 +7,7 @@ from authlib.jose.errors import DecodeError, ExpiredTokenError, InvalidClaimErro
 from workos import WorkOSClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.api.v1.schemas.auth import ForgotPasswordRequest, ForgotPasswordResponse, LoginResponse, RefreshTokenResponse, SignupResponse, WorkOSAuthorizationRequest, WorkOSLoginRequest, WorkOSRefreshTokenRequest, WorkOSResetPasswordRequest, WorkOsVerifyEmailRequest, WorkOSUserResponse
+from app.api.v1.schemas.auth import AuthUserResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginResponse, RefreshTokenResponse, SignupResponse, VerifyEmailResponse, WorkOSAuthorizationRequest, WorkOSLoginRequest, WorkOSRefreshTokenRequest, WorkOSResetPasswordRequest, WorkOsVerifyEmailRequest, WorkOSUserResponse
 from app.core.config import settings
 from app.models.user import User
 
@@ -25,7 +25,17 @@ class AuthService:
         self._jwks_cache: Optional[dict] = None
         self._jwks_cache_expiry: Optional[float] = None
 
-    async def verify_email(self, verify_email_request: WorkOsVerifyEmailRequest):
+    async def verify_email(self, verify_email_request: WorkOsVerifyEmailRequest, db: AsyncSession) -> VerifyEmailResponse:
+        """
+        Verify email and return response with user info including is_onboarded.
+        
+        Args:
+            verify_email_request: Email verification request
+            db: Database session to fetch user's is_onboarded status
+            
+        Returns:
+            VerifyEmailResponse with user info including is_onboarded
+        """
         # Offload synchronous WorkOS call to thread pool to avoid blocking event loop
         # Reference: https://docs.python.org/3/library/asyncio-task.html#asyncio.to_thread
         response = await asyncio.to_thread(
@@ -35,9 +45,53 @@ class AuthService:
             ip_address=verify_email_request.ip_address,
             user_agent=verify_email_request.user_agent
         )
-        return response
+        
+        # Fetch user from database to get is_onboarded
+        user_id = response.user.id if response.user else None
+        is_onboarded = False
+        if user_id:
+            result = await db.execute(select(User).where(User.id == user_id))
+            db_user = result.scalar_one_or_none()
+            if db_user:
+                is_onboarded = db_user.is_onboarded
+        
+        # Build AuthUserResponse with is_onboarded
+        user_response = None
+        if response.user:
+            user_response = AuthUserResponse(
+                object=response.user.object,
+                id=response.user.id,
+                email=response.user.email,
+                first_name=response.user.first_name,
+                last_name=response.user.last_name,
+                email_verified=response.user.email_verified,
+                profile_picture_url=response.user.profile_picture_url,
+                created_at=response.user.created_at,
+                updated_at=response.user.updated_at,
+                is_onboarded=is_onboarded
+            )
+        
+        return VerifyEmailResponse(
+            access_token=response.access_token,
+            refresh_token=response.refresh_token,
+            authentication_method=response.authentication_method,
+            impersonator=response.impersonator,
+            organization_id=response.organization_id,
+            user=user_response,
+            sealed_session=response.sealed_session
+        )
 
-    async def login(self, login_request: WorkOSLoginRequest) -> LoginResponse:
+    async def login(self, login_request: WorkOSLoginRequest, db: AsyncSession) -> LoginResponse:
+        """
+        Login user and return response with user info including is_onboarded.
+        
+        Args:
+            login_request: Login request
+            db: Database session to fetch user's is_onboarded status
+            
+        Returns:
+            LoginResponse with user info including is_onboarded
+        """
         # Offload synchronous WorkOS call to thread pool to avoid blocking event loop
         response = await asyncio.to_thread(
             self.workos_client.user_management.authenticate_with_password,
@@ -46,8 +100,34 @@ class AuthService:
             ip_address=login_request.ip_address,
             user_agent=login_request.user_agent
         )
+        
+        # Fetch user from database to get is_onboarded
+        user_id = response.user.id if response.user else None
+        is_onboarded = False
+        if user_id:
+            result = await db.execute(select(User).where(User.id == user_id))
+            db_user = result.scalar_one_or_none()
+            if db_user:
+                is_onboarded = db_user.is_onboarded
+        
+        # Build AuthUserResponse with is_onboarded
+        user_response = None
+        if response.user:
+            user_response = AuthUserResponse(
+                object=response.user.object,
+                id=response.user.id,
+                email=response.user.email,
+                first_name=response.user.first_name,
+                last_name=response.user.last_name,
+                email_verified=response.user.email_verified,
+                profile_picture_url=response.user.profile_picture_url,
+                created_at=response.user.created_at,
+                updated_at=response.user.updated_at,
+                is_onboarded=is_onboarded
+            )
+        
         return LoginResponse(
-            user=response.user,
+            user=user_response,
             organization_id=response.organization_id,
             access_token=response.access_token,
             refresh_token=response.refresh_token
@@ -150,8 +230,12 @@ class AuthService:
         
         logger.info(f"User created: {workos_user.id} ({email})")
         
-        # Convert WorkOS user to response schema
-        user_response = WorkOSUserResponse(
+        # Get is_onboarded from the user we just created in the database
+        # The user object should have is_onboarded with default False
+        is_onboarded = user.is_onboarded
+        
+        # Convert WorkOS user to AuthUserResponse schema with is_onboarded
+        user_response = AuthUserResponse(
             object=workos_user.object,
             id=workos_user.id,
             email=workos_user.email,
@@ -161,6 +245,7 @@ class AuthService:
             profile_picture_url=workos_user.profile_picture_url,
             created_at=workos_user.created_at,
             updated_at=workos_user.updated_at,
+            is_onboarded=is_onboarded
         )
         
         return SignupResponse(user=user_response)
@@ -183,15 +268,16 @@ class AuthService:
             message="If an account exists with this email address, a password reset link has been sent."
         )
 
-    async def reset_password(self, reset_password_request: WorkOSResetPasswordRequest) -> WorkOSUserResponse:
+    async def reset_password(self, reset_password_request: WorkOSResetPasswordRequest, db: AsyncSession) -> AuthUserResponse:
         """
         Reset a user's password.
         
         Args:
             reset_password_request: WorkOSResetPasswordRequest
+            db: Database session to fetch user's is_onboarded status
 
         Returns:
-            WorkOSUserResponse: User information
+            AuthUserResponse: User information including is_onboarded
         """
         # Offload synchronous WorkOS call to thread pool to avoid blocking event loop
         response = await asyncio.to_thread(
@@ -199,7 +285,17 @@ class AuthService:
             token=reset_password_request.token,
             new_password=reset_password_request.new_password
         )
-        return WorkOSUserResponse(
+        
+        # Fetch user from database to get is_onboarded
+        user_id = response.id
+        is_onboarded = False
+        if user_id:
+            result = await db.execute(select(User).where(User.id == user_id))
+            db_user = result.scalar_one_or_none()
+            if db_user:
+                is_onboarded = db_user.is_onboarded
+        
+        return AuthUserResponse(
             object=response.object,
             id=response.id,
             email=response.email,
@@ -209,6 +305,7 @@ class AuthService:
             profile_picture_url=response.profile_picture_url,
             created_at=response.created_at,
             updated_at=response.updated_at,
+            is_onboarded=is_onboarded
         )
 
     # Generate OAuth2 authorization URL
@@ -255,24 +352,52 @@ class AuthService:
 
     async def oauth2_callback(
         self, 
-        code: str
+        code: str,
+        db: AsyncSession
     ) -> LoginResponse:
         """
         Exchange a OAuth2 code for access token and refresh token.
         
         Args:
             code: OAuth2 code
+            db: Database session to fetch user's is_onboarded status
             
         Returns:
-            LoginResponse: Access token and refresh token
+            LoginResponse: Access token and refresh token with user info including is_onboarded
         """
         # Offload synchronous WorkOS call to thread pool to avoid blocking event loop
         response = await asyncio.to_thread(
             self.workos_client.user_management.authenticate_with_code,
             code=code
         )
+        
+        # Fetch user from database to get is_onboarded
+        user_id = response.user.id if response.user else None
+        is_onboarded = False
+        if user_id:
+            result = await db.execute(select(User).where(User.id == user_id))
+            db_user = result.scalar_one_or_none()
+            if db_user:
+                is_onboarded = db_user.is_onboarded
+        
+        # Build AuthUserResponse with is_onboarded
+        user_response = None
+        if response.user:
+            user_response = AuthUserResponse(
+                object=response.user.object,
+                id=response.user.id,
+                email=response.user.email,
+                first_name=response.user.first_name,
+                last_name=response.user.last_name,
+                email_verified=response.user.email_verified,
+                profile_picture_url=response.user.profile_picture_url,
+                created_at=response.user.created_at,
+                updated_at=response.user.updated_at,
+                is_onboarded=is_onboarded
+            )
+        
         return LoginResponse(
-            user=response.user,
+            user=user_response,
             organization_id=response.organization_id,
             access_token=response.access_token,
             refresh_token=response.refresh_token

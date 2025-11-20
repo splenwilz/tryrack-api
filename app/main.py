@@ -5,8 +5,11 @@ Reference: https://fastapi.tiangolo.com/tutorial/bigger-applications/
 """
 import logging
 from contextlib import asynccontextmanager
+from debug_toolbar.middleware import DebugToolbarMiddleware
 
-from fastapi import FastAPI
+
+import sys
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
@@ -56,7 +59,12 @@ app = FastAPI(
     docs_url="/docs",  # Swagger UI documentation
     redoc_url="/redoc",  # ReDoc documentation
     lifespan=lifespan,  # Add lifespan for startup/shutdown events
+    debug=settings.ENVIRONMENT == 'development',
 )
+if(settings.ENVIRONMENT == 'development'):
+    app.add_middleware(DebugToolbarMiddleware)
+
+
 
 allowed_origins = [
     "http://localhost:3000",
@@ -70,6 +78,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Debug middleware to log all requests
+@app.middleware("http")
+async def debug_middleware(request: Request, call_next):
+    sys.stdout.write(f"[DEBUG MIDDLEWARE] {request.method} {request.url.path}\n")
+    sys.stdout.flush()
+    response = await call_next(request)
+    sys.stdout.write(f"[DEBUG MIDDLEWARE] Response: {response.status_code}\n")
+    sys.stdout.flush()
+    return response
 
 
 # Include API routers

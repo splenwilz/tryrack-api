@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
+from app.models.user import SizeStandard
 
 
 class UserBase(BaseModel):
@@ -59,6 +60,7 @@ class UserResponse(BaseModel):
         email: User email (required)
         first_name: User first name (optional)
         last_name: User last name (optional)
+        is_onboarded: Boolean indicating if user has completed onboarding (required)
         created_at: Timestamp when user was created (optional)
         updated_at: Timestamp when user was last updated (optional)
     Reference: https://fastapi.tiangolo.com/tutorial/response-model/
@@ -67,6 +69,7 @@ class UserResponse(BaseModel):
     first_name: Optional[str] = Field(None, max_length=255, description="User first name")
     last_name: Optional[str] = Field(None, max_length=255, description="User last name")
     email: str = Field(..., min_length=1, max_length=255, description="User email")
+    is_onboarded: bool = Field(False, description="Boolean indicating if user has completed onboarding")
     created_at: Optional[datetime] = Field(None, description="Timestamp when user was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when user was last updated")
 
@@ -79,6 +82,7 @@ class UserUpdate(BaseModel):
     """
     first_name: Optional[str] = Field(None, max_length=255, description="User first name")
     last_name: Optional[str] = Field(None, max_length=255, description="User last name")
+    is_onboarded: Optional[bool] = Field(None, description="Boolean indicating if user has completed onboarding")
 
 
 class WorkOSUserResponse(BaseModel):
@@ -92,5 +96,141 @@ class WorkOSUserResponse(BaseModel):
     created_at: datetime = Field(..., description="User created at")
     updated_at: datetime = Field(..., description="User updated at")
 
+    class Config:
+        from_attributes = True
+
+
+class AuthUserResponse(WorkOSUserResponse):
+    """
+    Extended user response for auth endpoints that includes is_onboarded from our database.
+    Extends WorkOSUserResponse with the is_onboarded field from our User model.
+    """
+    is_onboarded: bool = Field(False, description="Boolean indicating if user has completed onboarding")
+
+
+class UserProfileCreate(BaseModel):
+    """
+    Schema for creating a new user profile.
+    
+    Uses enums for type-safe clothing sizes and validates measurements JSON structure.
+    
+    Attributes:
+        height_cm: User height in centimeters
+        waist_cm: User waist in centimeters
+        measurements: User gender-specific body measurements in JSON format. Keys should include units (e.g., 'bust_cm', 'chest_cm')
+        shoe_size: User shoe size (U.S. Standard)
+        shirt_size: User shirt size (U.S. Standard)
+        jacket_size: User jacket size (U.S. Standard)
+        pants_size: User pants size (e.g., '32x34' for waist x inseam)
+        top_size: User top size (U.S. Standard)
+        dress_size: User dress size (U.S. Standard)
+        profile_picture_url: User profile picture URL
+        full_body_image_url: User full body image URL
+    
+    Reference: https://docs.pydantic.dev/latest/concepts/validators/
+    """
+    height_cm: Optional[float] = Field(
+        None, 
+        ge=0, 
+        le=300,  # Reasonable max height in cm (~10 feet)
+        description="User height in centimeters"
+    )
+    waist_cm: Optional[float] = Field(
+        None, 
+        ge=0, 
+        le=200,  # Reasonable max waist in cm
+        description="User waist in centimeters"
+    )
+    measurements: Optional[dict[str, float]] = Field(
+        None, 
+        description="User gender-specific body measurements in JSON format. Keys should include units (e.g., 'bust_cm', 'chest_cm', 'hips_cm', 'shoulder_width_cm'). Example: {'bust_cm': 90.0, 'hips_cm': 95.0} for female or {'chest_cm': 100.0, 'shoulder_width_cm': 45.0} for male",
+        json_schema_extra={
+            "example": {
+                "bust_cm": 90.0,
+                "hips_cm": 95.0,
+            }
+        }
+    )
+    shoe_size_value: Optional[float] = Field(None, ge=0, description="Shoe size numeric value (e.g., 7, 40)")
+    shoe_size_standard: Optional[SizeStandard] = Field(None, description="Standard for shoe size (defaults to US if omitted)")
+    shirt_size_value: Optional[float] = Field(None, ge=0, description="Shirt size numeric value")
+    shirt_size_standard: Optional[SizeStandard] = Field(None, description="Standard for shirt size (defaults to US if omitted)")
+    jacket_size_value: Optional[float] = Field(None, ge=0, description="Jacket size numeric value")
+    jacket_size_standard: Optional[SizeStandard] = Field(None, description="Standard for jacket size (defaults to US if omitted)")
+    pants_size_value: Optional[float] = Field(None, ge=0, description="Pants size numeric value (waist or general size)")
+    pants_size_standard: Optional[SizeStandard] = Field(None, description="Standard for pants size (defaults to US if omitted)")
+    top_size_value: Optional[float] = Field(None, ge=0, description="Top size numeric value")
+    top_size_standard: Optional[SizeStandard] = Field(None, description="Standard for top size (defaults to US if omitted)")
+    dress_size_value: Optional[float] = Field(None, ge=0, description="Dress size numeric value")
+    dress_size_standard: Optional[SizeStandard] = Field(None, description="Standard for dress size (defaults to US if omitted)")
+    profile_picture_url: Optional[str] = Field(
+        None, 
+        max_length=500,
+        description="User profile picture URL"
+    )
+    full_body_image_url: Optional[str] = Field(
+        None, 
+        max_length=500,
+        description="User full body image URL"
+    )
+
+    @field_validator('measurements')
+    @classmethod
+    def validate_measurements(cls, v: Optional[dict[str, float]]) -> Optional[dict[str, float]]:
+        """Validate measurements JSON structure and values"""
+        if v is None:
+            return v
+        
+        # Validate all values are positive floats
+        for key, value in v.items():
+            if not isinstance(value, (int, float)) or value < 0:
+                raise ValueError(f"Measurement '{key}' must be a positive number")
+            
+            # Suggest units in key names (best practice)
+            if not any(unit in key.lower() for unit in ['_cm', '_in', '_inch']):
+                # Warning: suggest including units, but don't fail
+                pass
+        
+        return v
+
+    @model_validator(mode='after')
+    def validate_size_standards(self) -> 'UserProfileCreate':
+        """Ensure size standards align with provided values."""
+        size_pairs = [
+            ("shoe_size_value", "shoe_size_standard"),
+            ("shirt_size_value", "shirt_size_standard"),
+            ("jacket_size_value", "jacket_size_standard"),
+            ("pants_size_value", "pants_size_standard"),
+            ("top_size_value", "top_size_standard"),
+            ("dress_size_value", "dress_size_standard"),
+        ]
+        for value_field, standard_field in size_pairs:
+            value = getattr(self, value_field)
+            standard = getattr(self, standard_field)
+            if standard is not None and value is None:
+                raise ValueError(f"{standard_field} provided without {value_field}")
+            if value is not None and standard is None:
+                setattr(self, standard_field, SizeStandard.US)
+        return self
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserProfileUpdate(UserProfileCreate):
+    """
+    Schema for updating a user profile
+    Inherits from UserProfileCreate
+    """
+    pass
+
+class UserProfileResponse(UserProfileCreate):
+    """
+    Schema for user profile response
+    Includes all fields from UserProfileCreate plus database-generated fields
+    """
+    id: int = Field(..., description="User profile ID")
+    user_id: str = Field(..., description="User ID")
+    created_at: datetime = Field(..., description="User profile created at")
+    updated_at: datetime = Field(..., description="User profile updated at")
     class Config:
         from_attributes = True

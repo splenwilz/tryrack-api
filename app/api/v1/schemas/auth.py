@@ -2,7 +2,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 
-from app.api.v1.schemas.user import WorkOSUserResponse
+from app.api.v1.schemas.user import AuthUserResponse, WorkOSUserResponse
 
 class EmailVerificationRequiredResponse(BaseModel):
     message: str
@@ -65,7 +65,7 @@ class WorkOSLoginRequest(LoginRequest):
     user_agent: str = Field(..., description="User user agent")
 
 class LoginResponse(BaseModel):
-    user: WorkOSUserResponse = Field(..., description="User")
+    user: AuthUserResponse = Field(..., description="User")
     organization_id: str | None = Field(None, description="Organization ID")
     access_token: str = Field(..., description="Access token")
     refresh_token: str = Field(..., description="Refresh token")
@@ -77,7 +77,7 @@ class SignupResponse(BaseModel):
     Returns user information without tokens since email verification is required.
     User must verify email and then login to get tokens.
     """
-    user: WorkOSUserResponse = Field(..., description="Created user")
+    user: AuthUserResponse = Field(..., description="Created user")
     message: str = Field(default="User created successfully. Please verify your email to login.", description="Success message")
     is_verified: bool = Field(default=False, description="Whether the user is verified")
 
@@ -132,7 +132,7 @@ class VerifyEmailResponse(BaseModel):
     authentication_method: str | None = Field(None, description="Authentication method")
     impersonator: WorkOSImpersonatorResponse | None = Field(None, description="Impersonator")
     organization_id: str | None = Field(None, description="Organization ID")
-    user: WorkOSUserResponse | None = Field(None, description="User")
+    user: AuthUserResponse | None = Field(None, description="User")
     sealed_session: str | None = Field(None, description="Sealed session")
 
 
