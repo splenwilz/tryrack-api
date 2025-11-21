@@ -94,11 +94,15 @@ async def get_presigned_upload_url(
     # Get singleton storage service (cached via lru_cache)
     storage_service = get_storage_service()
     
+    # Normalize file extension (remove leading dot if present)
+    # This prevents double dots in S3 keys (e.g., "..jpg" if caller passes ".jpg")
+    normalized_extension = file_extension.lstrip('.')
+    
     try:
         # Generate presigned URL (synchronous, fast operation)
         result = storage_service.generate_presigned_upload_url(
             folder=folder,
-            file_extension=file_extension,
+            file_extension=normalized_extension,
             expiration=expiration
         )
         

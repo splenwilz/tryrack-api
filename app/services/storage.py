@@ -89,18 +89,18 @@ class StorageService:
             ClientError: If S3 upload fails
         """
         method_start = time.time()
-        if settings.ENVIRONMENT == "development":
-            print(f"[DEBUG] upload_image method started at {method_start:.3f}")
+        logger.debug(f"upload_image method started at {method_start:.3f}")
         
         # Generate unique filename: timestamp + UUID + extension
+        # Normalize file_extension (remove leading dot) to prevent double dots in keys
+        normalized_ext = file_extension.lstrip('.')
         filename_start = time.time()
         timestamp = datetime.utcnow().strftime("%Y%m%d")
         unique_id = str(uuid.uuid4())[:8]
-        filename = f"{timestamp}_{unique_id}.{file_extension}"
+        filename = f"{timestamp}_{unique_id}.{normalized_ext}"
         s3_key = f"{folder}/{filename}"
         filename_time = time.time()
-        if settings.ENVIRONMENT == "development":
-            print(f"[DEBUG] Filename generation took {(filename_time - filename_start) * 1000:.2f}ms")
+        logger.debug(f"Filename generation took {(filename_time - filename_start) * 1000:.2f}ms")
         
         # Convert to bytes if it's a file-like object
         convert_start = time.time()
@@ -108,15 +108,14 @@ class StorageService:
         if was_file_like:
             file_content = file_content.read()
         convert_time = time.time()
-        if was_file_like and settings.ENVIRONMENT == "development":
-            print(f"[DEBUG] File conversion took {(convert_time - convert_start) * 1000:.2f}ms")
+        if was_file_like:
+            logger.debug(f"File conversion took {(convert_time - convert_start) * 1000:.2f}ms")
         
         if not file_content:
             raise ValueError("File is empty")
         
         file_size = len(file_content)
-        if settings.ENVIRONMENT == "development":
-            print(f"[DEBUG] File size: {file_size} bytes ({file_size / 1024:.2f} KB)")
+        logger.debug(f"File size: {file_size} bytes ({file_size / 1024:.2f} KB)")
         
         # Upload to S3 (offload sync boto3 call to thread pool)
         # Using put_object with bytes - faster for small files (<5MB) than upload_fileobj
@@ -125,57 +124,51 @@ class StorageService:
         # Note: put_object is synchronous and returns when upload completes (no need for wait_until_exists)
         try:
             s3_start = time.time()
-            if settings.ENVIRONMENT == "development":
-                print(f"[DEBUG] Starting S3 put_object call at {s3_start:.3f}")
-                print(f"[DEBUG] Bucket: {self.bucket_name}, Key: {s3_key}, Region: {settings.AWS_REGION}")
-                print(f"[DEBUG] File size: {len(file_content)} bytes")
-                print(f"[DEBUG] S3 client endpoint: {self.s3_client.meta.endpoint_url if hasattr(self.s3_client.meta, 'endpoint_url') else 'default'}")
-                
-                # Add timeout and connection debugging
-                import socket
-                print(f"[DEBUG] Testing DNS resolution for {self.bucket_name}.s3.{settings.AWS_REGION}.amazonaws.com")
-                try:
-                    dns_start = time.time()
-                    socket.gethostbyname(f"{self.bucket_name}.s3.{settings.AWS_REGION}.amazonaws.com")
-                    dns_time = (time.time() - dns_start) * 1000
-                    print(f"[DEBUG] DNS resolution took {dns_time:.2f}ms")
-                except Exception as dns_e:
-                    print(f"[DEBUG] DNS resolution failed: {dns_e}")
+            logger.debug(f"Starting S3 put_object call at {s3_start:.3f}")
+            logger.debug(f"Bucket: {self.bucket_name}, Key: {s3_key}, Region: {settings.AWS_REGION}")
+            logger.debug(f"File size: {len(file_content)} bytes")
+            logger.debug(f"S3 client endpoint: {self.s3_client.meta.endpoint_url if hasattr(self.s3_client.meta, 'endpoint_url') else 'default'}")
+            
+            # Add timeout and connection debugging
+            import socket
+            logger.debug(f"Testing DNS resolution for {self.bucket_name}.s3.{settings.AWS_REGION}.amazonaws.com")
+            try:
+                dns_start = time.time()
+                socket.gethostbyname(f"{self.bucket_name}.s3.{settings.AWS_REGION}.amazonaws.com")
+                dns_time = (time.time() - dns_start) * 1000
+                logger.debug(f"DNS resolution took {dns_time:.2f}ms")
+            except Exception as dns_e:
+                logger.debug(f"DNS resolution failed: {dns_e}")
             
             # Wrap the S3 call with detailed timing
             def s3_upload_wrapper():
                 upload_start = time.time()
-                if settings.ENVIRONMENT == "development":
-                    print(f"[DEBUG] [THREAD] S3 put_object starting in thread at {upload_start:.3f}")
+                logger.debug(f"[THREAD] S3 put_object starting in thread at {upload_start:.3f}")
                 try:
                     self.s3_client.put_object(
                         Bucket=self.bucket_name,
                         Key=s3_key,
                         Body=file_content,
-                        ContentType=f"image/{file_extension}"
+                        ContentType=f"image/{normalized_ext}"
                     )
                     upload_end = time.time()
-                    if settings.ENVIRONMENT == "development":
-                        print(f"[DEBUG] [THREAD] S3 put_object completed in {(upload_end - upload_start) * 1000:.2f}ms")
+                    logger.debug(f"[THREAD] S3 put_object completed in {(upload_end - upload_start) * 1000:.2f}ms")
                 except Exception as e:
                     upload_end = time.time()
-                    if settings.ENVIRONMENT == "development":
-                        print(f"[DEBUG] [THREAD] S3 put_object failed after {(upload_end - upload_start) * 1000:.2f}ms: {e}")
+                    logger.debug(f"[THREAD] S3 put_object failed after {(upload_end - upload_start) * 1000:.2f}ms: {e}")
                     raise
             
             await asyncio.to_thread(s3_upload_wrapper)
             
             s3_end = time.time()
             s3_duration = (s3_end - s3_start) * 1000
-            if settings.ENVIRONMENT == "development":
-                print(f"[DEBUG] S3 put_object call completed in {s3_duration:.2f}ms")
+            logger.debug(f"S3 put_object call completed in {s3_duration:.2f}ms")
             
             # Construct and return public URL
             url = f"{self.base_url}/{s3_key}"
             method_end = time.time()
             method_duration = (method_end - method_start) * 1000
-            if settings.ENVIRONMENT == "development":
-                print(f"[DEBUG] Total upload_image method time: {method_duration:.2f}ms")
+            logger.debug(f"Total upload_image method time: {method_duration:.2f}ms")
             logger.info(
                 "Put object '%s' to bucket '%s' (%d bytes) in %.2fms.",
                 s3_key,
@@ -185,7 +178,7 @@ class StorageService:
             )
             return url
             
-        except ClientError as e:
+        except ClientError:
             # Don't convert ClientError to ValueError - let it bubble up as 500 error
             # ClientError indicates backend/S3 issues (misconfigured credentials, network, etc.)
             # These should be HTTP 500, not HTTP 400 (client error)
@@ -220,10 +213,13 @@ class StorageService:
                 - public_url: Public URL to access the file after upload
         """
         # Generate unique filename: timestamp + UUID + extension
+        # Normalize file_extension (remove leading dot) to prevent double dots in keys
+        # Use normalized extension consistently for both key and ContentType
+        normalized_ext = file_extension.lstrip('.')
         # Optimized: use uuid4().hex[:8] instead of str(uuid.uuid4())[:8] for faster string conversion
         timestamp = datetime.utcnow().strftime("%Y%m%d")
         unique_id = uuid.uuid4().hex[:8]
-        s3_key = f"{folder}/{timestamp}_{unique_id}.{file_extension}"
+        s3_key = f"{folder}/{timestamp}_{unique_id}.{normalized_ext}"
         
         try:
             # Generate presigned URL for PUT operation (synchronous, no network call)
@@ -233,7 +229,7 @@ class StorageService:
                 Params={
                     'Bucket': self.bucket_name,
                     'Key': s3_key,
-                    'ContentType': f"image/{file_extension.lstrip('.')}"
+                    'ContentType': f"image/{normalized_ext}"
                 },
                 ExpiresIn=expiration
             )
@@ -247,11 +243,11 @@ class StorageService:
                 "public_url": public_url
             }
             
-        except ClientError as e:
+        except ClientError:
             # Don't convert ClientError to ValueError - let it bubble up as 500 error
             # ClientError indicates backend/S3 issues (misconfigured credentials, network, etc.)
             # These should be HTTP 500, not HTTP 400 (client error)
-            logger.error(f"Failed to generate presigned URL: {e}", exc_info=True)
+            logger.error("Failed to generate presigned URL", exc_info=True)
             raise  # Re-raise ClientError so route can map to HTTP 500
     
     async def delete_image(self, url: str) -> bool:

@@ -1,4 +1,3 @@
-import sys
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from workos.exceptions import BadRequestException
@@ -8,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 # from app.core.exceptions import InvalidPasswordException
+from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.services.user import UserService
 import logging
@@ -54,38 +54,31 @@ async def get_user_profile(
             - 404 if profile not found
             - 500 for unexpected errors
     """
-    # Force immediate output - use both stdout and stderr, and logger
-    sys.stdout.write("=" * 80 + "\n")
-    sys.stdout.write("[DEBUG] GET /api/v1/user/profile - FUNCTION CALLED\n")
-    sys.stdout.flush()
-    sys.stderr.write("=" * 80 + "\n")
-    sys.stderr.write("[DEBUG STDERR] GET /api/v1/user/profile - FUNCTION CALLED\n")
-    sys.stderr.flush()
-    logger.error("=" * 80)
-    logger.error("[DEBUG LOGGER] GET /api/v1/user/profile - FUNCTION CALLED")
-    logger.error(f"[DEBUG] Getting profile for authenticated user:")
-    logger.error(f"  - current_user.id: '{current_user.id}' (type: {type(current_user.id)}, length: {len(current_user.id)})")
-    logger.error(f"  - current_user.email: '{current_user.email}'")
+    # Debug logging (only in development)
+    if settings.ENVIRONMENT == "development":
+        logger.debug("=" * 80)
+        logger.debug("GET /api/v1/user/profile - FUNCTION CALLED")
+        logger.debug("Getting profile for authenticated user:")
+        logger.debug(f"  - current_user.id: '{current_user.id}' (type: {type(current_user.id)}, length: {len(current_user.id)})")
+        logger.debug(f"  - current_user.email: '{current_user.email}'")
     
     user_service = UserService()
     try:
         user_profile = await user_service.get_user_profile(db, current_user.id)
         if not user_profile:
-            logger.error(f"[DEBUG] Profile not found for user_id: '{current_user.id}'")
-            logger.error("[DEBUG] GET /api/v1/user/profile - END (404)")
-            logger.error("=" * 80)
-            sys.stderr.write(f"[DEBUG] Profile not found for user_id: '{current_user.id}'\n")
-            sys.stderr.flush()
+            if settings.ENVIRONMENT == "development":
+                logger.debug(f"Profile not found for user_id: '{current_user.id}'")
+                logger.debug("GET /api/v1/user/profile - END (404)")
+                logger.debug("=" * 80)
             logger.warning(f"Profile not found for user_id: {current_user.id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User profile not found"
             )
-        logger.error(f"[DEBUG] Profile retrieved successfully for user: '{current_user.id}'")
-        logger.error("[DEBUG] GET /api/v1/user/profile - END (200)")
-        logger.error("=" * 80)
-        sys.stderr.write(f"[DEBUG] Profile retrieved successfully for user: '{current_user.id}'\n")
-        sys.stderr.flush()
+        if settings.ENVIRONMENT == "development":
+            logger.debug(f"Profile retrieved successfully for user: '{current_user.id}'")
+            logger.debug("GET /api/v1/user/profile - END (200)")
+            logger.debug("=" * 80)
         logger.info(f"Profile retrieved successfully for user: {current_user.id}")
         return user_profile
     except HTTPException:
@@ -110,7 +103,6 @@ async def get_user_profile(
         201: {"description": "Profile created successfully"},
         400: {"description": "Invalid request data or validation error"},
         401: {"description": "Unauthorized - authentication required"},
-        403: {"description": "Forbidden - users can only create their own profile"},
         404: {"description": "User not found"},
         409: {"description": "Profile already exists for this user"},
         500: {"description": "Internal server error"}
