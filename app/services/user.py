@@ -1,12 +1,17 @@
 import asyncio
-from typing import List
+import logging
+import sys
+from typing import List, Optional
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from workos import WorkOSClient
 from datetime import datetime, timezone
 from app.core.config import settings
-from app.models.user import User
-from app.api.v1.schemas.user import UserCreate, UserUpdate
+from app.models.user import User, UserProfile
+from app.api.v1.schemas.user import UserCreate, UserProfileCreate, UserProfileUpdate, UserUpdate
+
+logger = logging.getLogger(__name__)
 
 class UserService:
     def __init__(self):
@@ -70,15 +75,22 @@ class UserService:
         if not update_data:
             return existing_user
         
-        # Offload synchronous WorkOS call to thread pool to avoid blocking event loop
-        # Only send fields that were explicitly provided (prevents clearing fields with None)
-        await asyncio.to_thread(
-            self.workos_client.user_management.update_user,
-            user_id=user_id,
-            **update_data
-        )   
+        # Separate fields that should be sent to WorkOS from fields that are only in our database
+        # is_onboarded is only stored in our database, not in WorkOS
+        workos_fields = ['first_name', 'last_name']  # Fields that exist in WorkOS
+        workos_update_data = {k: v for k, v in update_data.items() if k in workos_fields}
         
-        # Update the database model with the same filtered data
+        # Update WorkOS if there are WorkOS fields to update
+        if workos_update_data:
+            # Offload synchronous WorkOS call to thread pool to avoid blocking event loop
+            # Only send fields that were explicitly provided (prevents clearing fields with None)
+            await asyncio.to_thread(
+                self.workos_client.user_management.update_user,
+                user_id=user_id,
+                **workos_update_data
+            )   
+        
+        # Update the database model with all update data (including is_onboarded)
         for field, value in update_data.items():
             setattr(existing_user, field, value)
 
@@ -105,4 +117,202 @@ class UserService:
         )
 
         await db.delete(existing_user)
+        return True
+
+    async def create_user_profile(
+        self, 
+        db: AsyncSession, 
+        user_id: str, 
+        user_profile_data: UserProfileCreate
+    ) -> UserProfile:
+        """
+        Create a user profile for a given user.
+        
+        Edge cases handled:
+        - Validates user exists before creating profile
+        - Prevents duplicate profile creation (unique constraint)
+        - Only sets fields that were explicitly provided (exclude_unset=True)
+        - Handles database integrity errors gracefully
+        
+        Args:
+            db: Database session
+            user_id: ID of the user to create profile for
+            user_profile_data: Profile data to create
+            
+        Returns:
+            Created UserProfile instance
+            
+        Raises:
+            ValueError: If user doesn't exist
+            IntegrityError: If profile already exists for this user
+        """
+        # Edge case 1: Validate user exists before creating profile
+        # Prevents foreign key constraint violation
+        user = await self.get_user(db, user_id)
+        if not user:
+            logger.warning(f"Attempted to create profile for non-existent user: {user_id}")
+            raise ValueError(f"User with ID '{user_id}' does not exist")
+        
+        # Edge case 2: Check if profile already exists
+        # Prevents unique constraint violation at database level
+        result = await db.execute(
+            select(UserProfile).where(UserProfile.user_id == user_id)
+        )
+        existing_profile = result.scalar_one_or_none()
+        if existing_profile:
+            logger.warning(f"Profile already exists for user: {user_id}")
+            raise IntegrityError(
+                statement="INSERT INTO user_profiles",
+                params=None,
+                orig=Exception(
+                    f"duplicate key value violates unique constraint "
+                    f"\"uq_user_profiles_user_id\" - profile already exists for user {user_id}"
+                )
+            )
+        
+        # Edge case 3: Only include fields that were explicitly set
+        # Prevents overwriting with None values for omitted fields
+        # Reference: https://docs.pydantic.dev/latest/api/standard_library/#pydantic.BaseModel.model_dump
+        profile_data = user_profile_data.model_dump(exclude_unset=True)
+        
+        # Edge case 4: Create profile with validated data
+        # Enums are already validated by Pydantic schema
+        user_profile = UserProfile(
+            user_id=user_id,
+            **profile_data
+        )
+        
+        db.add(user_profile)
+        
+        try:
+            await db.flush()
+            logger.info(f"Created profile for user: {user_id}")
+            return user_profile
+        except IntegrityError as e:
+            # Edge case 5: Handle race condition - profile created between check and insert
+            # This can happen in concurrent requests
+            error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
+            if "uq_user_profiles_user_id" in error_str or "unique constraint" in error_str.lower():
+                logger.warning(f"Profile creation race condition detected for user: {user_id}")
+                # Fetch the existing profile that was just created
+                result = await db.execute(
+                    select(UserProfile).where(UserProfile.user_id == user_id)
+                )
+                existing_profile = result.scalar_one_or_none()
+                if existing_profile:
+                    return existing_profile
+            # Re-raise if it's a different integrity error
+            raise
+
+    async def get_user_profile(self, db: AsyncSession, user_id: str) -> Optional[UserProfile]:
+        """
+        Get user profile by user ID.
+        
+        Args:
+            db: Database session
+            user_id: ID of the user
+            
+        Returns:
+            UserProfile if found, None otherwise
+        """
+        sys.stdout.write(f"[DEBUG] get_user_profile SERVICE CALLED with user_id: '{user_id}'\n")
+        sys.stdout.flush()
+        sys.stderr.write(f"[DEBUG STDERR] get_user_profile SERVICE CALLED with user_id: '{user_id}'\n")
+        sys.stderr.flush()
+        logger.error(f"[DEBUG LOGGER] Searching for profile with user_id: '{user_id}' (type: {type(user_id)}, length: {len(user_id)})")
+        result = await db.execute(select(UserProfile).where(UserProfile.user_id == user_id))
+        user_profile = result.scalar_one_or_none()
+        if user_profile:
+            logger.error(f"[DEBUG] Found profile: id={user_profile.id}, user_id='{user_profile.user_id}' (type: {type(user_profile.user_id)}, length: {len(user_profile.user_id)})")
+            sys.stderr.write(f"[DEBUG] Found profile: id={user_profile.id}, user_id='{user_profile.user_id}'\n")
+            sys.stderr.flush()
+        else:
+            logger.error(f"[DEBUG] No profile found for user_id: '{user_id}'")
+            sys.stderr.write(f"[DEBUG] No profile found for user_id: '{user_id}'\n")
+            sys.stderr.flush()
+            # Also check what user_ids exist in the database
+            all_profiles = await db.execute(select(UserProfile))
+            existing_user_ids = [p.user_id for p in all_profiles.scalars().all()]
+            logger.error(f"[DEBUG] Existing user_ids in database: {existing_user_ids}")
+            sys.stderr.write(f"[DEBUG] Existing user_ids in database: {existing_user_ids}\n")
+            sys.stderr.flush()
+            logger.error(f"[DEBUG] Comparison check:")
+            for existing_id in existing_user_ids:
+                match = user_id == existing_id
+                repr_match = repr(user_id) == repr(existing_id)
+                logger.error(f"  - '{user_id}' == '{existing_id}'? {match}")
+                logger.error(f"  - repr('{user_id}') == repr('{existing_id}')? {repr_match}")
+                sys.stderr.write(f"  - '{user_id}' == '{existing_id}'? {match}\n")
+                sys.stderr.write(f"  - repr('{user_id}') == repr('{existing_id}')? {repr_match}\n")
+                sys.stderr.flush()
+        return user_profile
+
+    async def update_user_profile(
+        self, 
+        db: AsyncSession, 
+        user_id: str, 
+        user_profile_data: UserProfileUpdate
+    ) -> Optional[UserProfile]:
+        """
+        Update an existing user profile.
+        
+        Args:
+            db: Database session
+            user_id: ID of the user whose profile to update
+            user_profile_data: Profile update data (partial)
+            
+        Returns:
+            Updated UserProfile if found, None otherwise
+        """
+        existing_user_profile = await self.get_user_profile(db, user_id)
+        if not existing_user_profile:
+            return None
+
+        # Get only fields that were explicitly set (exclude_unset=True)
+        # This prevents overwriting with None values for omitted fields
+        # Reference: https://docs.pydantic.dev/latest/api/standard_library/#pydantic.BaseModel.model_dump
+        update_data = user_profile_data.model_dump(exclude_unset=True)
+        
+        # Early return if no fields to update
+        if not update_data:
+            return existing_user_profile
+        
+        # Update the database model with all update data
+        # Use setattr loop (SQLAlchemy models don't have .update() method)
+        for field, value in update_data.items():
+            setattr(existing_user_profile, field, value)
+
+        # Don't commit here - let the get_db() dependency handle commit/rollback
+        await db.flush()  # Flush changes to database (without committing)
+        # Don't refresh here - timestamps will be available after commit
+        # In serverless, refreshing before commit can cause connection issues
+        
+        # Manually set updated_at since we can't reliably refresh in serverless environments
+        # (onupdate=func.now() may not work reliably in serverless)
+        existing_user_profile.updated_at = datetime.now(timezone.utc)
+
+        logger.info(f"Profile updated for user: {user_id}")
+        return existing_user_profile
+
+    async def delete_user_profile(self, db: AsyncSession, user_id: str) -> bool:
+        """
+        Delete a user profile.
+        
+        Args:
+            db: Database session
+            user_id: ID of the user whose profile to delete
+            
+        Returns:
+            True if deleted, False if not found
+        """
+        existing_user_profile = await self.get_user_profile(db, user_id)
+        if not existing_user_profile:
+            return False
+        
+        # Delete profile (db.delete() is not awaitable - it marks for deletion)
+        # The actual deletion happens on commit
+        db.delete(existing_user_profile)
+        # No need to flush for delete - commit will handle it
+        
+        logger.info(f"Profile deleted for user: {user_id}")
         return True
