@@ -26,6 +26,22 @@ logger = logging.getLogger(__name__)
 _user_cache: dict[str, tuple[WorkOSUserResponse, float]] = {}
 USER_CACHE_TTL = 300  # 5 minutes in seconds
 
+# Token blacklist to invalidate JWTs immediately after logout
+# Cache structure: {jti: expiry_timestamp}
+# Stores JWT ID (jti claim) with token expiration time
+# Tokens are automatically removed when they expire
+# Reference: https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.7
+_token_blacklist: dict[str, float] = {}
+
+def _cleanup_expired_blacklist_tokens():
+    """Remove expired tokens from blacklist to prevent memory leaks."""
+    current_time = time.time()
+    expired_jtis = [jti for jti, expiry in _token_blacklist.items() if current_time >= expiry]
+    for jti in expired_jtis:
+        del _token_blacklist[jti]
+    if expired_jtis:
+        logger.debug(f"Cleaned up {len(expired_jtis)} expired tokens from blacklist")
+
 # HTTPBearer automatically extracts Bearer token from Authorization header
 # Reference: https://fastapi.tiangolo.com/reference/security/#fastapi.security.HTTPBearer
 security = HTTPBearer()
@@ -163,7 +179,11 @@ async def get_current_user(
         description = msg or "The access token is invalid"
 
         if "expired" in msg.lower():
+            error = "invalid_token"  # RFC6750: use invalid_token for expired tokens
             description = "The access token expired"
+            # If message contains "Token verification failed:", remove it for cleaner error
+            if "Token verification failed:" in msg:
+                msg = msg.replace("Token verification failed: ", "")
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

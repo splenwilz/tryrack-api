@@ -197,3 +197,10 @@ class WorkOSRefreshTokenRequest(RefreshTokenRequest):
 class RefreshTokenResponse(BaseModel):
     access_token: str = Field(..., description="Access token")
     refresh_token: str = Field(..., description="Refresh token")
+
+class LogoutRequest(BaseModel):
+    """Request to logout - no body needed, uses access token from Authorization header"""
+    pass
+
+class LogoutResponse(BaseModel):
+    message: str = Field(default="Successfully logged out", description="Logout success message")

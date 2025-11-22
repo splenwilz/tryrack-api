@@ -484,11 +484,35 @@ class AuthService:
             
             logger.debug(f"Token verified successfully. User: {claims.get('sub')}")
             
+            # Check token blacklist before returning
+            # This allows immediate invalidation of tokens after logout
+            jti = claims.get('jti')  # JWT ID - unique identifier for this token
+            if jti:
+                from app.core.dependencies import _token_blacklist, _cleanup_expired_blacklist_tokens
+                
+                # Clean up expired tokens periodically
+                _cleanup_expired_blacklist_tokens()
+                
+                current_time = time.time()
+                
+                # Check if token is blacklisted
+                if jti in _token_blacklist:
+                    blacklist_expiry = _token_blacklist[jti]
+                    # If token hasn't expired yet, it's blacklisted
+                    if current_time < blacklist_expiry:
+                        logger.warning(f"Token is blacklisted: {jti}")
+                        # Return "expired" message for security - don't reveal token was revoked
+                        raise ValueError("Token has expired")
+                    else:
+                        # Token expired, remove from blacklist
+                        del _token_blacklist[jti]
+            
             # Extract user information from verified token
             # Reference: https://workos.com/docs/reference/authkit/session-tokens/access-token
             return {
                 'user_id': claims.get('sub'),              # User ID (subject)
                 'session_id': claims.get('sid'),           # Session ID
+                'jti': jti,                                # JWT ID (for blacklisting)
                 'organization_id': claims.get('org_id'),  # Organization ID
                 'role': claims.get('role'),                # User role (e.g., "member", "admin")
                 'roles': claims.get('roles', []),         # Array of roles
@@ -537,4 +561,91 @@ class AuthService:
             access_token=response.access_token,
             refresh_token=response.refresh_token
         )
+
+    async def logout(self, access_token: str, skip_blacklist_check: bool = False) -> bool:
+        """
+        Logout a user by revoking their session and blacklisting the token.
+        
+        Extracts the session ID from the access token and revokes it via WorkOS API.
+        Also adds the token to the blacklist to immediately invalidate it.
+        This invalidates the session and prevents the token from being used.
+        
+        Reference: https://workos.com/docs/reference/authkit/authentication/get-authorization-url/pkce
+        
+        Args:
+            access_token: JWT access token containing session ID and JWT ID (jti)
+            skip_blacklist_check: If True, skip blacklist check during verification (used internally)
+            
+        Returns:
+            True if logout successful, False otherwise
+            
+        Raises:
+            ValueError: If token is invalid or session ID cannot be extracted
+        """
+        try:
+            from app.core.dependencies import _token_blacklist
+            
+            # Verify token and extract session data
+            # We'll decode directly to get jti before adding to blacklist
+            # Get JWKS for decoding
+            jwks_url = await asyncio.to_thread(
+                self.workos_client.user_management.get_jwks_url
+            )
+            
+            # Use cached JWKS if available
+            current_time = time.time()
+            if not self._jwks_cache or (self._jwks_cache_expiry and current_time > self._jwks_cache_expiry):
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(jwks_url, timeout=10.0)
+                    response.raise_for_status()
+                    self._jwks_cache = response.json()
+                    self._jwks_cache_expiry = current_time + 3600
+            
+            jwk_set = JsonWebKey.import_key_set(self._jwks_cache)
+            
+            # Decode and verify token to get claims
+            claims = jwt.decode(
+                access_token,
+                jwk_set,
+                claims_options={
+                    "exp": {"essential": True},
+                    "iat": {"essential": True}
+                }
+            )
+            claims.validate()
+            
+            # Extract required claims
+            jti = claims.get('jti')  # JWT ID for blacklisting
+            token_exp = claims.get('exp')  # Token expiration
+            session_id = claims.get('sid')  # Session ID for revocation
+            
+            if not session_id:
+                logger.warning("Token missing session_id (sid claim)")
+                raise ValueError("Invalid token: missing session information")
+            
+            # Revoke the session via WorkOS API
+            # Reference: https://workos.com/docs/reference/authkit/authentication/get-authorization-url/pkce
+            # POST /user_management/sessions/revoke
+            await asyncio.to_thread(
+                self.workos_client.user_management.revoke_session,
+                session_id=session_id
+            )
+            
+            # Add token to blacklist using JWT ID (jti)
+            # Store with token expiration time so it auto-cleans up when token expires
+            if jti and token_exp:
+                _token_blacklist[jti] = float(token_exp)
+                logger.info(f"Token blacklisted: {jti} (expires at {token_exp})")
+            else:
+                logger.warning(f"Token missing jti or exp claim, cannot blacklist: jti={jti}, exp={token_exp}")
+            
+            logger.info(f"Session revoked successfully: {session_id}")
+            return True
+            
+        except ValueError as e:
+            # Re-raise ValueError from token verification
+            raise
+        except Exception as e:
+            logger.error(f"Error during logout: {type(e).__name__}: {e}", exc_info=True)
+            raise ValueError(f"Logout failed: {str(e)}") from e
 
