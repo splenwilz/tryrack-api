@@ -443,14 +443,24 @@ class AuthService:
             # Fetch JWKS (with caching to avoid repeated API calls)
             current_time = time.time()
             if not self._jwks_cache or (self._jwks_cache_expiry and current_time > self._jwks_cache_expiry):
-                logger.debug(f"Fetching JWKS from: {jwks_url}")
+                jwks_start = time.time()
+                import sys
+                sys.stdout.write(f"[TIMING] Fetching JWKS from: {jwks_url}\n")
+                sys.stdout.flush()
                 async with httpx.AsyncClient() as client:
                     response = await client.get(jwks_url, timeout=10.0)
                     response.raise_for_status()
                     self._jwks_cache = response.json()
                     # Cache for 1 hour (JWKS keys don't change often)
                     self._jwks_cache_expiry = current_time + 3600
+                    jwks_time = (time.time() - jwks_start) * 1000
+                    sys.stdout.write(f"[TIMING] JWKS fetch took {jwks_time:.1f}ms\n")
+                    sys.stdout.flush()
                     logger.debug(f"JWKS fetched and cached. Keys: {len(self._jwks_cache.get('keys', []))}")
+            else:
+                import sys
+                sys.stdout.write(f"[TIMING] JWKS cache HIT (expires in {self._jwks_cache_expiry - current_time:.1f}s)\n")
+                sys.stdout.flush()
             
             # Create JWK set from JWKS
             # authlib handles parsing the JWKS and selecting the correct key

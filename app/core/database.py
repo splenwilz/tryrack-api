@@ -3,6 +3,9 @@ Database connection and session management
 Uses SQLAlchemy async engine for PostgreSQL
 Reference: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
 """
+
+import sys
+import time
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
@@ -76,13 +79,21 @@ async def get_db() -> AsyncSession:
     - Rolls back on error
     - Always closes the session
     """
+    db_start = time.time()
     async with async_session_maker() as session:
+        db_connect_time = (time.time() - db_start) * 1000
+        sys.stdout.write(f"[TIMING] Database session creation took {db_connect_time:.1f}ms\n")
+        sys.stdout.flush()
         try:
             yield session
             # Commit transaction on success
             # This commits all changes made during the request
             # In serverless, this must complete before the function terminates
+            commit_start = time.time()
             await session.commit()
+            commit_time = (time.time() - commit_start) * 1000
+            sys.stdout.write(f"[TIMING] session.commit() took {commit_time:.1f}ms\n")
+            sys.stdout.flush()
         except Exception as e:
             # Rollback on any exception to maintain data consistency
             try:

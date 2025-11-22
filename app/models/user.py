@@ -1,9 +1,12 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, UniqueConstraint, func, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.wardrobe import Wardrobe
 
 
 class SizeStandard(str, Enum):
@@ -16,6 +19,14 @@ class SizeStandard(str, Enum):
     OTHER = "OTHER"
 
 size_standard_enum = SAEnum(SizeStandard, name="size_standard_enum")
+
+
+class Gender(str, Enum):
+    """Gender identity options."""
+    MALE = "MALE"
+    FEMALE = "FEMALE"
+
+gender_enum = SAEnum(Gender, name="gender_enum")
 
 class User(Base):
     """
@@ -47,6 +58,14 @@ class User(Base):
         "UserProfile", 
         back_populates="user", 
         uselist=False,
+        cascade="all, delete-orphan"
+    )
+    
+    # One-to-many relationship to Wardrobe items
+    # Reference: https://docs.sqlalchemy.org/en/21/orm/basic_relationships.html#one-to-many
+    wardrobe_items: Mapped[list["Wardrobe"]] = relationship(
+        "Wardrobe",
+        back_populates="user",
         cascade="all, delete-orphan"
     )
     
@@ -102,6 +121,13 @@ class UserProfile(Base):
     )
     user: Mapped["User"] = relationship("User", back_populates="profile")
 
+    # Gender identity
+    gender: Mapped[Optional[Gender]] = mapped_column(
+        gender_enum,
+        nullable=True,
+        comment="User's gender identity"
+    )
+
     # Common body measurements (in centimeters)
     # Units specified in field names to avoid ambiguity
     height_cm: Mapped[Optional[float]] = mapped_column(
@@ -126,11 +152,12 @@ class UserProfile(Base):
         comment="Gender-specific body measurements in JSON format. Keys should include units (e.g., 'bust_cm', 'chest_cm')"
     )
 
-    # Clothing sizes stored as numeric value + explicit standard for per-item flexibility
-    shoe_size_value: Mapped[Optional[float]] = mapped_column(
-        Float,
+    # Clothing sizes stored as string value + explicit standard for per-item flexibility
+    # Supports letter sizes (XS, S, M, L, XL, XXL, XXXL), numeric (10, 12, 40), and combined (32x34)
+    shoe_size_value: Mapped[Optional[str]] = mapped_column(
+        String(20),
         nullable=True,
-        comment="Shoe size numeric value (e.g., 7, 40)"
+        comment="Shoe size value (e.g., '7', '7.5', '40')"
     )
     shoe_size_standard: Mapped[Optional[SizeStandard]] = mapped_column(
         size_standard_enum,
@@ -139,30 +166,30 @@ class UserProfile(Base):
     )
     
     # Male clothing sizes
-    shirt_size_value: Mapped[Optional[float]] = mapped_column(
-        Float,
+    shirt_size_value: Mapped[Optional[str]] = mapped_column(
+        String(20),
         nullable=True,
-        comment="Shirt size numeric value"
+        comment="Shirt size value (e.g., 'M', 'XL', '10')"
     )
     shirt_size_standard: Mapped[Optional[SizeStandard]] = mapped_column(
         size_standard_enum,
         nullable=True,
         comment="Standard for shirt size (e.g., US, EU)"
     )
-    jacket_size_value: Mapped[Optional[float]] = mapped_column(
-        Float,
+    jacket_size_value: Mapped[Optional[str]] = mapped_column(
+        String(20),
         nullable=True,
-        comment="Jacket size numeric value"
+        comment="Jacket size value (e.g., 'M', 'XL', '10')"
     )
     jacket_size_standard: Mapped[Optional[SizeStandard]] = mapped_column(
         size_standard_enum,
         nullable=True,
         comment="Standard for jacket size (e.g., US, EU)"
     )
-    pants_size_value: Mapped[Optional[float]] = mapped_column(
-        Float, 
+    pants_size_value: Mapped[Optional[str]] = mapped_column(
+        String(20), 
         nullable=True,
-        comment="Pants size numeric value (waist or general size)"
+        comment="Pants size value (e.g., '32', '32x34' for waist x inseam)"
     )
     pants_size_standard: Mapped[Optional[SizeStandard]] = mapped_column(
         size_standard_enum,
@@ -171,20 +198,20 @@ class UserProfile(Base):
     )
     
     # Female clothing sizes
-    top_size_value: Mapped[Optional[float]] = mapped_column(
-        Float,
+    top_size_value: Mapped[Optional[str]] = mapped_column(
+        String(20),
         nullable=True,
-        comment="Top size numeric value"
+        comment="Top size value (e.g., 'M', 'XL', '10')"
     )
     top_size_standard: Mapped[Optional[SizeStandard]] = mapped_column(
         size_standard_enum,
         nullable=True,
         comment="Standard for top size (e.g., US, EU)"
     )
-    dress_size_value: Mapped[Optional[float]] = mapped_column(
-        Float,
+    dress_size_value: Mapped[Optional[str]] = mapped_column(
+        String(20),
         nullable=True,
-        comment="Dress size numeric value"
+        comment="Dress size value (e.g., 'M', 'XL', '10')"
     )
     dress_size_standard: Mapped[Optional[SizeStandard]] = mapped_column(
         size_standard_enum,

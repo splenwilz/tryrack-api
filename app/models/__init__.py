@@ -8,7 +8,8 @@ from app.core.database import Base
 
 # Import models here as they are created
 from app.models.task import Task
-from app.models.user import User
+from app.models.user import User, UserProfile
+from app.models.wardrobe import Wardrobe, ItemStatus
 
 # Export all models for easy imports
-__all__ = ["Base", "Task", "User"]
+__all__ = ["Base", "Task", "User", "UserProfile", "Wardrobe", "ItemStatus"]
