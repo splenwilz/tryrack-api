@@ -543,7 +543,7 @@ class AuthService:
                 if await is_token_blacklisted(jti):
                     logger.warning(f"Token is blacklisted: {jti}")
                     # Return "expired" message for security - don't reveal token was revoked
-                    raise ValueError("Token has expired")
+                    raise ValueError("Token has expired") from None
 
             # Extract user information from verified token
             # Reference: https://workos.com/docs/reference/authkit/session-tokens/access-token
@@ -562,23 +562,23 @@ class AuthService:
 
         except ExpiredTokenError:
             logger.warning("Token has expired")
-            raise ValueError("Token has expired")
+            raise ValueError("Token has expired") from None
         except BadSignatureError:
             logger.warning("Invalid token signature")
             raise ValueError(
                 "Invalid token signature - token may have been tampered with"
-            )
+            ) from None
         except DecodeError as e:
             logger.warning(f"Failed to decode token: {e}")
-            raise ValueError(f"Invalid token format: {e}")
+            raise ValueError(f"Invalid token format: {e}") from e
         except InvalidClaimError as e:
             logger.warning(f"Invalid token claim: {e}")
-            raise ValueError(f"Invalid token claim: {e}")
+            raise ValueError(f"Invalid token claim: {e}") from e
         except Exception as e:
             logger.error(
                 f"Error verifying session: {type(e).__name__}: {e}", exc_info=True
             )
-            raise ValueError(f"Token verification failed: {str(e)}")
+            raise ValueError(f"Token verification failed: {str(e)}") from e
 
     # refresh token
     async def refresh_token(

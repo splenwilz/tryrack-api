@@ -4,7 +4,6 @@ Reference: https://docs.sqlalchemy.org/en/21/orm/queryguide/
 """
 
 import logging
-import sys
 import time
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -64,8 +63,6 @@ class WardrobeService:
         Returns:
             List of wardrobe items
         """
-        query_start = time.time()
-
         query = select(Wardrobe).where(Wardrobe.user_id == user_id)
 
         if category:
@@ -76,19 +73,8 @@ class WardrobeService:
 
         query = query.order_by(Wardrobe.created_at.desc()).offset(skip).limit(limit)
 
-        execute_start = time.time()
         result = await db.execute(query)
-        execute_time = (time.time() - execute_start) * 1000
-        sys.stdout.write(f"[TIMING] db.execute() took {execute_time:.1f}ms\n")
-        sys.stdout.flush()
-
-        all_start = time.time()
         items = list(result.scalars().all())
-        all_time = (time.time() - all_start) * 1000
-        total_time = (time.time() - query_start) * 1000
-        sys.stdout.write(f"[TIMING] result.scalars().all() took {all_time:.1f}ms\n")
-        sys.stdout.write(f"[TIMING] Total get_wardrobe_items took {total_time:.1f}ms\n")
-        sys.stdout.flush()
 
         return items
 

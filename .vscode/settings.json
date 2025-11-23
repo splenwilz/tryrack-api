@@ -14,12 +14,7 @@
     "--profile=black",
     "--line-length=120"
 ],
-
-// Workspace Settings
-
-"python.formatting.blackPath": "/absolute/path/to/venv/with/black",
 "python.formatting.blackArgs": [
     "-l 120"
-],
-
+]
 }
