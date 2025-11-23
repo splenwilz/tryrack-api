@@ -24,14 +24,15 @@ def upgrade() -> None:
     op.execute("CREATE TYPE item_status_enum_new AS ENUM ('clean', 'worn', 'dirty')")
     
     # Convert existing data and alter column to use new enum
-    # Using CASE to convert uppercase enum values to lowercase
+    # Using CASE to convert enum values to lowercase
+    # Handles both uppercase (legacy DBs) and lowercase (fresh installs after migration fix) values
     op.execute("""
         ALTER TABLE wardrobe_items 
         ALTER COLUMN status TYPE item_status_enum_new 
         USING CASE 
-            WHEN status::text = 'CLEAN' THEN 'clean'::item_status_enum_new
-            WHEN status::text = 'WORN' THEN 'worn'::item_status_enum_new
-            WHEN status::text = 'DIRTY' THEN 'dirty'::item_status_enum_new
+            WHEN status::text IN ('CLEAN', 'clean') THEN 'clean'::item_status_enum_new
+            WHEN status::text IN ('WORN', 'worn') THEN 'worn'::item_status_enum_new
+            WHEN status::text IN ('DIRTY', 'dirty') THEN 'dirty'::item_status_enum_new
             ELSE NULL
         END
     """)
@@ -49,13 +50,14 @@ def downgrade() -> None:
     op.execute("CREATE TYPE item_status_enum_old AS ENUM ('CLEAN', 'WORN', 'DIRTY')")
     
     # Convert existing data and alter column to use old enum
+    # Handles both lowercase and uppercase values (idempotent)
     op.execute("""
         ALTER TABLE wardrobe_items 
         ALTER COLUMN status TYPE item_status_enum_old 
         USING CASE 
-            WHEN status::text = 'clean' THEN 'CLEAN'::item_status_enum_old
-            WHEN status::text = 'worn' THEN 'WORN'::item_status_enum_old
-            WHEN status::text = 'dirty' THEN 'DIRTY'::item_status_enum_old
+            WHEN status::text IN ('clean', 'CLEAN') THEN 'CLEAN'::item_status_enum_old
+            WHEN status::text IN ('worn', 'WORN') THEN 'WORN'::item_status_enum_old
+            WHEN status::text IN ('dirty', 'DIRTY') THEN 'DIRTY'::item_status_enum_old
             ELSE NULL
         END
     """)

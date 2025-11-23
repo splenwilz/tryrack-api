@@ -1,0 +1,25 @@
+
+{
+
+"editor.defaultFormatter": null,
+"editor.formatOnSave": false,  // enable per language
+"[python]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    }
+},
+"python.formatting.provider": "black",
+"python.sortImports.args": [
+    "--profile=black",
+    "--line-length=120"
+],
+
+// Workspace Settings
+
+"python.formatting.blackPath": "/absolute/path/to/venv/with/black",
+"python.formatting.blackArgs": [
+    "-l 120"
+],
+
+}
