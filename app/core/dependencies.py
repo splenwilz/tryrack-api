@@ -27,20 +27,82 @@ _user_cache: dict[str, tuple[WorkOSUserResponse, float]] = {}
 USER_CACHE_TTL = 300  # 5 minutes in seconds
 
 # Token blacklist to invalidate JWTs immediately after logout
-# Cache structure: {jti: expiry_timestamp}
+# Uses Redis for multi-instance support, falls back to in-memory dict if Redis not configured
+# Cache structure: {jti: expiry_timestamp} (in-memory) or Redis key "blacklist:{jti}" with TTL
 # Stores JWT ID (jti claim) with token expiration time
-# Tokens are automatically removed when they expire
+# Tokens are automatically removed when they expire (via Redis TTL or manual cleanup)
 # Reference: https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.7
-_token_blacklist: dict[str, float] = {}
+_token_blacklist: dict[str, float] = {}  # Fallback in-memory storage
+
+async def is_token_blacklisted(jti: str) -> bool:
+    """
+    Check if a token JWT ID (jti) is blacklisted.
+    
+    Uses Redis if configured, otherwise falls back to in-memory storage.
+    
+    Args:
+        jti: JWT ID (jti claim) from the token
+        
+    Returns:
+        True if token is blacklisted, False otherwise
+    """
+    from app.core.redis import get_redis_client
+    
+    redis_client = get_redis_client()
+    if redis_client:
+        # Use Redis for multi-instance support
+        return await redis_client.exists(f"blacklist:{jti}")
+    else:
+        # Fallback to in-memory storage
+        current_time = time.time()
+        if jti in _token_blacklist:
+            expiry = _token_blacklist[jti]
+            if current_time < expiry:
+                return True
+            else:
+                # Token expired, remove from blacklist
+                del _token_blacklist[jti]
+        return False
+
+async def add_token_to_blacklist(jti: str, expires_at: float) -> bool:
+    """
+    Add a token JWT ID (jti) to the blacklist.
+    
+    Uses Redis if configured, otherwise falls back to in-memory storage.
+    
+    Args:
+        jti: JWT ID (jti claim) from the token
+        expires_at: Unix timestamp when the token expires
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    from app.core.redis import get_redis_client
+    
+    redis_client = get_redis_client()
+    if redis_client:
+        # Use Redis for multi-instance support
+        # Calculate TTL in seconds
+        current_time = time.time()
+        ttl_seconds = max(1, int(expires_at - current_time))
+        return await redis_client.setex(f"blacklist:{jti}", ttl_seconds, "blacklisted")
+    else:
+        # Fallback to in-memory storage
+        _token_blacklist[jti] = expires_at
+        return True
 
 def _cleanup_expired_blacklist_tokens():
-    """Remove expired tokens from blacklist to prevent memory leaks."""
+    """
+    Remove expired tokens from in-memory blacklist to prevent memory leaks.
+    
+    Note: This is only used for in-memory fallback. Redis handles expiration automatically via TTL.
+    """
     current_time = time.time()
     expired_jtis = [jti for jti, expiry in _token_blacklist.items() if current_time >= expiry]
     for jti in expired_jtis:
         del _token_blacklist[jti]
     if expired_jtis:
-        logger.debug(f"Cleaned up {len(expired_jtis)} expired tokens from blacklist")
+        logger.debug(f"Cleaned up {len(expired_jtis)} expired tokens from in-memory blacklist")
 
 # HTTPBearer automatically extracts Bearer token from Authorization header
 # Reference: https://fastapi.tiangolo.com/reference/security/#fastapi.security.HTTPBearer

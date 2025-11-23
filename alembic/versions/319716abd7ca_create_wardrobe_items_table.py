@@ -29,7 +29,7 @@ def upgrade() -> None:
     sa.Column('colors', sa.JSON(), nullable=False, comment="List of colors (e.g., ['burgundy', 'olive green', 'black'])"),
     sa.Column('image_url', sa.String(length=500), nullable=False, comment='URL to item image'),
     sa.Column('tags', sa.JSON(), nullable=True, comment="List of tags for filtering/searching (e.g., ['short sleeve', 'geometric', 'casual', 'summer', 'silk'])"),
-    sa.Column('status', sa.Enum('CLEAN', 'WORN', 'DIRTY', name='item_status_enum'), nullable=True, comment='Current item status (clean, worn, dirty)'),
+    sa.Column('status', sa.Enum('clean', 'worn', 'dirty', name='item_status_enum'), nullable=True, comment='Current item status (clean, worn, dirty)'),
     sa.Column('last_worn_at', sa.DateTime(timezone=True), nullable=True, comment='Timestamp when item was last worn (nullable for unworn items)'),
     sa.Column('wear_count', sa.Integer(), nullable=False, comment='Number of times item has been worn'),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False, comment='Timestamp when item was created'),

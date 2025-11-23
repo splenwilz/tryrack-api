@@ -136,8 +136,8 @@ class WardrobeService:
             return wardrobe_item
         except IntegrityError as e:
             await db.rollback()
-            logger.error(f"Failed to create wardrobe item: {e}", exc_info=True)
-            raise ValueError(f"Failed to create wardrobe item: {str(e)}") from e
+            logger.error("Failed to create wardrobe item due to database error", exc_info=True)
+            raise ValueError("Failed to create wardrobe item due to database constraints") from e
     
     async def update_wardrobe_item(
         self,
@@ -179,8 +179,8 @@ class WardrobeService:
             return wardrobe_item
         except IntegrityError as e:
             await db.rollback()
-            logger.error(f"Failed to update wardrobe item: {e}", exc_info=True)
-            raise ValueError(f"Failed to update wardrobe item: {str(e)}") from e
+            logger.error("Failed to update wardrobe item due to database error", exc_info=True)
+            raise ValueError("Failed to update wardrobe item due to database constraints") from e
     
     async def delete_wardrobe_item(
         self,
@@ -239,6 +239,6 @@ class WardrobeService:
             return wardrobe_item
         except IntegrityError as e:
             await db.rollback()
-            logger.error(f"Failed to mark item as worn: {e}", exc_info=True)
-            raise ValueError(f"Failed to mark item as worn: {str(e)}") from e
+            logger.error("Failed to mark item as worn due to database error", exc_info=True)
+            raise ValueError("Failed to mark item as worn due to database constraints") from e
 

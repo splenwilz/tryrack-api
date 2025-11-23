@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.11.0",
     "sqlalchemy>=2.0.44",
+    "upstash-redis>=1.0.0",
     "uvicorn[standard]>=0.38.0",
     "workos>=5.0.0",
 ]

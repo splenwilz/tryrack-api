@@ -486,26 +486,19 @@ class AuthService:
             
             # Check token blacklist before returning
             # This allows immediate invalidation of tokens after logout
+            # Uses Redis for multi-instance support, falls back to in-memory if Redis not configured
             jti = claims.get('jti')  # JWT ID - unique identifier for this token
             if jti:
-                from app.core.dependencies import _token_blacklist, _cleanup_expired_blacklist_tokens
+                from app.core.dependencies import is_token_blacklisted, _cleanup_expired_blacklist_tokens
                 
-                # Clean up expired tokens periodically
+                # Clean up expired tokens from in-memory blacklist (only for fallback)
                 _cleanup_expired_blacklist_tokens()
                 
-                current_time = time.time()
-                
-                # Check if token is blacklisted
-                if jti in _token_blacklist:
-                    blacklist_expiry = _token_blacklist[jti]
-                    # If token hasn't expired yet, it's blacklisted
-                    if current_time < blacklist_expiry:
-                        logger.warning(f"Token is blacklisted: {jti}")
-                        # Return "expired" message for security - don't reveal token was revoked
-                        raise ValueError("Token has expired")
-                    else:
-                        # Token expired, remove from blacklist
-                        del _token_blacklist[jti]
+                # Check if token is blacklisted (uses Redis if available)
+                if await is_token_blacklisted(jti):
+                    logger.warning(f"Token is blacklisted: {jti}")
+                    # Return "expired" message for security - don't reveal token was revoked
+                    raise ValueError("Token has expired")
             
             # Extract user information from verified token
             # Reference: https://workos.com/docs/reference/authkit/session-tokens/access-token
@@ -583,7 +576,6 @@ class AuthService:
             ValueError: If token is invalid or session ID cannot be extracted
         """
         try:
-            from app.core.dependencies import _token_blacklist
             
             # Verify token and extract session data
             # We'll decode directly to get jti before adding to blacklist
@@ -632,10 +624,15 @@ class AuthService:
             )
             
             # Add token to blacklist using JWT ID (jti)
+            # Uses Redis for multi-instance support, falls back to in-memory if Redis not configured
             # Store with token expiration time so it auto-cleans up when token expires
             if jti and token_exp:
-                _token_blacklist[jti] = float(token_exp)
-                logger.info(f"Token blacklisted: {jti} (expires at {token_exp})")
+                from app.core.dependencies import add_token_to_blacklist
+                success = await add_token_to_blacklist(jti, float(token_exp))
+                if success:
+                    logger.info(f"Token blacklisted: {jti} (expires at {token_exp})")
+                else:
+                    logger.warning(f"Failed to blacklist token: {jti}")
             else:
                 logger.warning(f"Token missing jti or exp claim, cannot blacklist: jti={jti}, exp={token_exp}")
             
