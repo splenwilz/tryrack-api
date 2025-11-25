@@ -42,7 +42,9 @@ async def get_wardrobe_items(
         None, description="Filter by category (e.g., 'shirt', 'pants', 'dress')"
     ),
     status_filter: Optional[ItemStatus] = Query(
-        None, alias="status", description="Filter by status (clean, worn, dirty)"
+        None,
+        alias="status",
+        description="Filter by status (clean, planned, worn, dirty)",
     ),
     skip: int = Query(0, ge=0, description="Number of items to skip (for pagination)"),
     limit: int = Query(
@@ -56,7 +58,7 @@ async def get_wardrobe_items(
 
     **Filtering:**
     - Filter by category (e.g., "shirt", "pants")
-    - Filter by status (clean, worn, dirty)
+    - Filter by status (clean, planned, worn, dirty)
     - Pagination with skip/limit
 
     **Authorization:**
@@ -188,7 +190,7 @@ async def create_wardrobe_item(
     - Users can only create items for themselves (user_id is automatically set from authenticated user)
 
     **Defaults:**
-    - status defaults to "clean" if not provided
+      - status defaults to "clean" if not provided (can also be "planned", "worn", or "dirty")
     - wear_count defaults to 0
 
     Args:

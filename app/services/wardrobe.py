@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +38,14 @@ class WardrobeService:
         result = await db.execute(
             select(Wardrobe).where(Wardrobe.id == item_id, Wardrobe.user_id == user_id)
         )
-        return result.scalar_one_or_none()
+
+        item = result.scalar_one_or_none()
+
+        # Convert status string to ItemStatus enum for Pydantic serialization
+        if item and isinstance(item.status, str) and item.status:
+            item.status = ItemStatus(item.status)
+
+        return item
 
     async def get_wardrobe_items(
         self,
@@ -69,12 +76,19 @@ class WardrobeService:
             query = query.where(Wardrobe.category == category)
 
         if status:
-            query = query.where(Wardrobe.status == status)
+            # Convert enum to string value for database comparison
+            query = query.where(Wardrobe.status == status.value)
 
         query = query.order_by(Wardrobe.created_at.desc()).offset(skip).limit(limit)
 
         result = await db.execute(query)
         items = list(result.scalars().all())
+
+        # Convert status strings to ItemStatus enum for Pydantic serialization
+        # The database stores status as VARCHAR, but Pydantic expects ItemStatus enum
+        for item in items:
+            if isinstance(item.status, str) and item.status:
+                item.status = ItemStatus(item.status)
 
         return items
 
@@ -100,7 +114,9 @@ class WardrobeService:
 
         # Set default status if not provided
         if "status" not in item_data or item_data["status"] is None:
-            item_data["status"] = ItemStatus.CLEAN
+            item_data["status"] = ItemStatus.CLEAN.value  # Store as string value
+        elif isinstance(item_data["status"], ItemStatus):
+            item_data["status"] = item_data["status"].value  # Convert enum to string
 
         # Create wardrobe item
         wardrobe_item = Wardrobe(user_id=user_id, **item_data)
@@ -151,6 +167,9 @@ class WardrobeService:
         update_data = wardrobe_data.model_dump(exclude_unset=True)
 
         for field, value in update_data.items():
+            # Convert enum to string value for status field
+            if field == "status" and isinstance(value, ItemStatus):
+                value = value.value
             setattr(wardrobe_item, field, value)
 
         # Manually set updated_at since we can't reliably refresh in serverless environments
@@ -197,6 +216,8 @@ class WardrobeService:
         """
         Mark a wardrobe item as worn (increment wear_count and update last_worn_at).
 
+        Uses a single atomic UPDATE query for better performance.
+
         Args:
             db: Database session
             item_id: Item ID
@@ -205,17 +226,32 @@ class WardrobeService:
         Returns:
             Updated Wardrobe item if found, None otherwise
         """
-        wardrobe_item = await self.get_wardrobe_item(db, item_id, user_id)
-        if not wardrobe_item:
-            return None
+        now = datetime.now(timezone.utc)
 
-        wardrobe_item.wear_count += 1
-        wardrobe_item.last_worn_at = datetime.now(timezone.utc)
-        wardrobe_item.status = ItemStatus.WORN
-        wardrobe_item.updated_at = datetime.now(timezone.utc)
+        # Use atomic UPDATE query to increment wear_count and update fields in a single operation
+        # This is faster than SELECT + UPDATE and prevents race conditions
+        stmt = (
+            update(Wardrobe)
+            .where(Wardrobe.id == item_id, Wardrobe.user_id == user_id)
+            .values(
+                wear_count=Wardrobe.wear_count + 1,  # Atomic increment
+                last_worn_at=now,
+                status=ItemStatus.WORN.value,
+                updated_at=now,
+            )
+            .returning(Wardrobe)
+        )
 
         try:
+            result = await db.execute(stmt)
             await db.flush()
+
+            wardrobe_item = result.scalar_one_or_none()
+            if not wardrobe_item:
+                return None
+
+            # Convert status back to enum for Pydantic serialization
+            wardrobe_item.status = ItemStatus.WORN
             logger.info(f"Marked wardrobe item {item_id} as worn for user: {user_id}")
             return wardrobe_item
         except IntegrityError as e:
