@@ -1,6 +1,7 @@
 """
 Schemas for virtual try-on sessions.
 """
+
 from datetime import datetime
 from typing import List, Optional, Union
 
@@ -14,7 +15,9 @@ class SelectedItem(BaseModel):
     title: str = Field(..., description="Item title at selection time")
     category: str = Field(..., description="Item category (e.g., shirt)")
     colors: List[str] = Field(..., description="Colors associated with the item")
-    tags: List[str] = Field(..., description="Tags associated with the item (e.g., casual, streetwear)")
+    tags: List[str] = Field(
+        ..., description="Tags associated with the item (e.g., casual, streetwear)"
+    )
 
     @field_validator("colors", "tags")
     @classmethod
@@ -49,7 +52,9 @@ class VirtualTryOnBase(BaseModel):
         description="Optional prompt override (`customPrompt`). Null/empty if user left it blank",
     )
     selected_items: List[SelectedItem] = Field(
-        ..., min_length=1, description="Snapshot of wardrobe items included in this try-on"
+        ...,
+        min_length=1,
+        description="Snapshot of wardrobe items included in this try-on",
     )
 
 
@@ -76,5 +81,3 @@ class VirtualTryOnResponse(VirtualTryOnBase):
     updated_at: datetime = Field(..., description="Last updated timestamp")
 
     model_config = ConfigDict(from_attributes=True)
-
-

@@ -87,7 +87,7 @@ class Wardrobe(Base):
     category: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
-        index=True,
+        # Index is defined in __table_args__ below to avoid duplication
         comment="Item category (e.g., 'shirt', 'pants', 'dress')",
     )
 
