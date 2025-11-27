@@ -9,9 +9,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SelectedItem(BaseModel):
-    """Snapshot of a wardrobe item used in a try-on session."""
+    """
+    Snapshot of a wardrobe item used in a try-on session.
 
-    id: Union[int, str] = Field(..., description="Original wardrobe item identifier")
+    Supports both database wardrobe items (int IDs) and external/temporary items (str IDs).
+    Examples: 6 (wardrobe item from DB), "external-123" (temporary item not yet saved).
+    """
+
+    id: Union[int, str] = Field(
+        ...,
+        union_mode="left_to_right",  # Try int first, then str for explicit coercion
+        description="Original wardrobe item identifier (int for DB items, str for external/temporary items)",
+    )
     title: str = Field(..., description="Item title at selection time")
     category: str = Field(..., description="Item category (e.g., shirt)")
     colors: List[str] = Field(..., description="Colors associated with the item")
