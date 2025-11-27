@@ -13,7 +13,7 @@ class SelectedItem(BaseModel):
     id: Union[int, str] = Field(..., description="Original wardrobe item identifier")
     title: str = Field(..., description="Item title at selection time")
     category: str = Field(..., description="Item category (e.g., shirt)")
-    colors: List[str] = Field(..., min_length=1, description="Colors associated with the item")
+    colors: List[str] = Field(..., description="Colors associated with the item")
     tags: List[str] = Field(..., description="Tags associated with the item (e.g., casual, streetwear)")
 
     @field_validator("colors", "tags")

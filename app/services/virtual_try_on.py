@@ -1,7 +1,9 @@
 """
 Service for Virtual Try-On sessions.
 """
+
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -32,11 +34,18 @@ class VirtualTryOnService:
         """
 
         payload = session_data.model_dump()
+        now = datetime.now(timezone.utc)
         session = VirtualTryOn(user_id=user_id, **payload)
+        # Manually set timestamps to ensure they're available for serialization
+        # Server-generated defaults won't be populated until after commit
+        session.created_at = now
+        session.updated_at = now
         db.add(session)
         await db.flush()
 
-        logger.info("Created virtual try-on session %s for user %s", session.id, user_id)
+        logger.info(
+            "Created virtual try-on session %s for user %s", session.id, user_id
+        )
         return session
 
     async def get_session(
@@ -65,10 +74,8 @@ class VirtualTryOnService:
 
         result = await db.execute(
             select(VirtualTryOn)
-                .where(VirtualTryOn.user_id == user_id)
-                .order_by(VirtualTryOn.created_at.desc())
-                .limit(limit)
+            .where(VirtualTryOn.user_id == user_id)
+            .order_by(VirtualTryOn.created_at.desc())
+            .limit(limit)
         )
         return list(result.scalars().all())
-
-

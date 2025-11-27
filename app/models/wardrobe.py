@@ -8,9 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import JSON, DateTime
-from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, Index, Integer, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -30,12 +28,9 @@ class ItemStatus(str, Enum):
     DIRTY = "dirty"
 
 
-# Use native_enum=False to store enum values as VARCHAR/String instead of PostgreSQL enum
-# This avoids the mismatch between enum member names (CLEAN) and values (clean)
-# Reference: https://docs.sqlalchemy.org/en/21/core/type_basics.html#sqlalchemy.types.Enum
-item_status_enum = SAEnum(
-    ItemStatus, name="item_status_enum", native_enum=False, length=10
-)
+# Note: We store status as String(10) in the database, not as a PostgreSQL enum
+# This allows flexibility and avoids enum value/name mismatches
+# Pydantic schemas handle enum validation at the API boundary
 
 
 class Wardrobe(Base):
@@ -50,7 +45,7 @@ class Wardrobe(Base):
         colors: List of colors (e.g., ["burgundy", "olive green", "black"])
         image_url: URL to item image
         tags: List of tags for filtering/searching (e.g., ["short sleeve", "geometric", "casual", "summer", "silk"])
-        status: Current status (clean, worn, dirty)
+        status: Current status (clean, planned, worn, dirty)
         last_worn_at: Timestamp when item was last worn (nullable for unworn items)
         wear_count: Number of times item has been worn (default: 0)
 
@@ -80,7 +75,7 @@ class Wardrobe(Base):
             "users.id", ondelete="CASCADE"
         ),  # Cascade delete when user is deleted
         nullable=False,
-        index=True,  # Index for faster lookups
+        # Index is defined in __table_args__ below to avoid duplication
     )
     user: Mapped["User"] = relationship("User", back_populates="wardrobe_items")
 

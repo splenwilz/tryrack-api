@@ -40,11 +40,8 @@ class WardrobeService:
         )
 
         item = result.scalar_one_or_none()
-
-        # Convert status string to ItemStatus enum for Pydantic serialization
-        if item and isinstance(item.status, str) and item.status:
-            item.status = ItemStatus(item.status)
-
+        # Pydantic will automatically convert status string to ItemStatus enum
+        # when serializing with from_attributes=True
         return item
 
     async def get_wardrobe_items(
@@ -83,13 +80,8 @@ class WardrobeService:
 
         result = await db.execute(query)
         items = list(result.scalars().all())
-
-        # Convert status strings to ItemStatus enum for Pydantic serialization
-        # The database stores status as VARCHAR, but Pydantic expects ItemStatus enum
-        for item in items:
-            if isinstance(item.status, str) and item.status:
-                item.status = ItemStatus(item.status)
-
+        # Pydantic will automatically convert status strings to ItemStatus enum
+        # when serializing with from_attributes=True
         return items
 
     async def create_wardrobe_item(
@@ -250,8 +242,8 @@ class WardrobeService:
             if not wardrobe_item:
                 return None
 
-            # Convert status back to enum for Pydantic serialization
-            wardrobe_item.status = ItemStatus.WORN
+            # Pydantic will automatically convert status string to ItemStatus enum
+            # when serializing with from_attributes=True
             logger.info(f"Marked wardrobe item {item_id} as worn for user: {user_id}")
             return wardrobe_item
         except IntegrityError as e:
