@@ -80,7 +80,19 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = Field(
         default="development",
         description="Environment name"
-    )  
+    )
+    
+    # Upstash Redis Configuration
+    # Used for token blacklist to support multi-instance deployments
+    # Reference: https://upstash.com/docs/redis/overall/getstarted
+    UPSTASH_REDIS_REST_URL: str | None = Field(
+        None,
+        description="Upstash Redis REST URL for token blacklist"
+    )
+    UPSTASH_REDIS_REST_TOKEN: str | None = Field(
+        None,
+        description="Upstash Redis REST token for authentication"
+    )
     
     @property
     def allowed_redirect_uris_list(self) -> list[str]:

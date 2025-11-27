@@ -4,11 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from workos.exceptions import BadRequestException, EmailVerificationRequiredException, NotFoundException
 
-from app.api.v1.schemas.auth import AuthorizationRequest, AuthorizationUrlResponse, EmailVerificationRequiredResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, LoginResponse, OAuthCallbackRequest, RefreshTokenRequest, RefreshTokenResponse, ResetPasswordRequest, SignupRequest, SignupResponse, VerifyEmailRequest, VerifyEmailResponse, WorkOSAuthorizationRequest, WorkOSLoginRequest, WorkOSRefreshTokenRequest, WorkOSResetPasswordRequest, WorkOsVerifyEmailRequest
+from app.api.v1.schemas.auth import AuthorizationRequest, AuthorizationUrlResponse, EmailVerificationRequiredResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, OAuthCallbackRequest, RefreshTokenRequest, RefreshTokenResponse, ResetPasswordRequest, SignupRequest, SignupResponse, VerifyEmailRequest, VerifyEmailResponse, WorkOSAuthorizationRequest, WorkOSLoginRequest, WorkOSRefreshTokenRequest, WorkOSResetPasswordRequest, WorkOsVerifyEmailRequest
 from app.api.v1.schemas.user import AuthUserResponse
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.dependencies import get_auth_service
+from app.core.dependencies import get_auth_service, get_current_user
 import logging
 
 logger = logging.getLogger(__name__)
@@ -524,4 +524,76 @@ async def refresh_token(refresh_token_request: RefreshTokenRequest, request: Req
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to refresh token"
+        ) from e
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    summary="Logout user",
+    description="Logout the authenticated user by revoking their session",
+    status_code=status.HTTP_200_OK,
+    responses={
+        401: {"description": "Unauthorized - invalid or missing token"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def logout(
+    request: Request,
+    current_user = Depends(get_current_user)
+) -> LogoutResponse:
+    """
+    Logout the authenticated user.
+    
+    Revokes the user's session in WorkOS, invalidating the access token.
+    The user will need to login again to obtain a new access token.
+    
+    Args:
+        request: HTTP request (to extract Authorization header)
+        current_user: Authenticated user (from JWT token)
+        
+    Returns:
+        LogoutResponse: Success message
+        
+    Raises:
+        HTTPException: 401 if token is invalid, 500 for server errors
+    """
+    auth_service = get_auth_service()
+    
+    try:
+        # Extract access token from Authorization header
+        authorization = request.headers.get("Authorization")
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid Authorization header",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        access_token = authorization.replace("Bearer ", "")
+        
+        # Revoke session via WorkOS
+        await auth_service.logout(access_token)
+        
+        # Clear user cache on logout
+        from app.core.dependencies import _user_cache
+        if current_user.id in _user_cache:
+            del _user_cache[current_user.id]
+            logger.debug(f"Cleared user cache for: {current_user.id}")
+        
+        logger.info(f"User logged out successfully: {current_user.id}")
+        return LogoutResponse(message="Successfully logged out")
+        
+    except ValueError as e:
+        # Invalid token or missing session ID
+        logger.warning(f"Logout failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from e
+    except Exception as e:
+        logger.error(f"Unexpected error during logout: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during logout"
         ) from e

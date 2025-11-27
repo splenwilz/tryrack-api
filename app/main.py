@@ -24,24 +24,29 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup and shutdown events
-    Validates database connection on startup
+    Validates database connection on startup (only in production)
     Reference: https://fastapi.tiangolo.com/advanced/events/
     """
-    # Startup: Test database connection
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
-        logger.info("✓ Database connection successful")
-    except Exception as e:
-        logger.error(f"✗ Database connection failed: {e}")
-        logger.error(
-            "Please check:\n"
-            "1. DATABASE_URL is set correctly in Vercel environment variables\n"
-            "2. AWS RDS security group allows connections from Vercel IP ranges\n"
-            "3. Database is accessible and credentials are correct"
-        )
-        # Don't raise - let the app start but connections will fail
-        # This allows health checks to work
+    # Startup: Test database connection (only in production)
+    # In development, skip connection check to avoid noisy warnings
+    # when database is not accessible locally
+    if settings.ENVIRONMENT != "development":
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info("✓ Database connection successful")
+        except Exception as e:
+            logger.error(f"✗ Database connection failed: {e}")
+            logger.error(
+                "Please check:\n"
+                "1. DATABASE_URL is set correctly in Vercel environment variables\n"
+                "2. AWS RDS security group allows connections from Vercel IP ranges\n"
+                "3. Database is accessible and credentials are correct"
+            )
+            # Don't raise - let the app start but connections will fail
+            # This allows health checks to work
+    else:
+        logger.debug("Skipping database connection check in development mode")
     
     yield
     

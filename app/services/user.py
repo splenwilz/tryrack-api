@@ -2,7 +2,7 @@ import asyncio
 import logging
 import sys
 from typing import List, Optional
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from workos import WorkOSClient
@@ -307,12 +307,22 @@ class UserService:
         """
         existing_user_profile = await self.get_user_profile(db, user_id)
         if not existing_user_profile:
+            logger.debug(f"Profile not found for user: {user_id}")
             return False
         
-        # Delete profile (db.delete() is not awaitable - it marks for deletion)
-        # The actual deletion happens on commit
-        db.delete(existing_user_profile)
-        # No need to flush for delete - commit will handle it
+        # Delete profile using SQLAlchemy delete statement
+        # Use delete() statement for reliable async deletion
+        # Reference: https://docs.sqlalchemy.org/en/20/core/dml.html#sqlalchemy.sql.expression.delete
+        profile_id = existing_user_profile.id
+        stmt = delete(UserProfile).where(UserProfile.id == profile_id)
+        result = await db.execute(stmt)
+        await db.flush()  # Flush to execute the delete immediately
         
-        logger.info(f"Profile deleted for user: {user_id}")
+        # Check if any rows were deleted
+        rows_deleted = result.rowcount
+        if rows_deleted == 0:
+            logger.warning(f"No rows deleted for profile_id: {profile_id}, user_id: {user_id}")
+            return False
+        
+        logger.info(f"Profile deleted successfully for user: {user_id}, profile_id: {profile_id} (rows_deleted: {rows_deleted})")
         return True
