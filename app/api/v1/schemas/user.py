@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
+import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
-from app.models.user import SizeStandard
+from app.models.user import SizeStandard, Gender
 
 
 class UserBase(BaseModel):
@@ -115,6 +116,7 @@ class UserProfileCreate(BaseModel):
     Uses enums for type-safe clothing sizes and validates measurements JSON structure.
     
     Attributes:
+        gender: User's gender identity
         height_cm: User height in centimeters
         waist_cm: User waist in centimeters
         measurements: User gender-specific body measurements in JSON format. Keys should include units (e.g., 'bust_cm', 'chest_cm')
@@ -129,6 +131,10 @@ class UserProfileCreate(BaseModel):
     
     Reference: https://docs.pydantic.dev/latest/concepts/validators/
     """
+    gender: Optional[Gender] = Field(
+        None,
+        description="User's gender identity"
+    )
     height_cm: Optional[float] = Field(
         None, 
         ge=0, 
@@ -151,17 +157,17 @@ class UserProfileCreate(BaseModel):
             }
         }
     )
-    shoe_size_value: Optional[float] = Field(None, ge=0, description="Shoe size numeric value (e.g., 7, 40)")
+    shoe_size_value: Optional[str] = Field(None, max_length=20, description="Shoe size value (e.g., '7', '7.5', '40')")
     shoe_size_standard: Optional[SizeStandard] = Field(None, description="Standard for shoe size (defaults to US if omitted)")
-    shirt_size_value: Optional[float] = Field(None, ge=0, description="Shirt size numeric value")
+    shirt_size_value: Optional[str] = Field(None, max_length=20, description="Shirt size value (e.g., 'M', 'XL', '10')")
     shirt_size_standard: Optional[SizeStandard] = Field(None, description="Standard for shirt size (defaults to US if omitted)")
-    jacket_size_value: Optional[float] = Field(None, ge=0, description="Jacket size numeric value")
+    jacket_size_value: Optional[str] = Field(None, max_length=20, description="Jacket size value (e.g., 'M', 'XL', '10')")
     jacket_size_standard: Optional[SizeStandard] = Field(None, description="Standard for jacket size (defaults to US if omitted)")
-    pants_size_value: Optional[float] = Field(None, ge=0, description="Pants size numeric value (waist or general size)")
+    pants_size_value: Optional[str] = Field(None, max_length=20, description="Pants size value (e.g., '32', '32x34' for waist x inseam)")
     pants_size_standard: Optional[SizeStandard] = Field(None, description="Standard for pants size (defaults to US if omitted)")
-    top_size_value: Optional[float] = Field(None, ge=0, description="Top size numeric value")
+    top_size_value: Optional[str] = Field(None, max_length=20, description="Top size value (e.g., 'M', 'XL', '10')")
     top_size_standard: Optional[SizeStandard] = Field(None, description="Standard for top size (defaults to US if omitted)")
-    dress_size_value: Optional[float] = Field(None, ge=0, description="Dress size numeric value")
+    dress_size_value: Optional[str] = Field(None, max_length=20, description="Dress size value (e.g., 'M', 'XL', '10')")
     dress_size_standard: Optional[SizeStandard] = Field(None, description="Standard for dress size (defaults to US if omitted)")
     profile_picture_url: Optional[str] = Field(
         None, 
@@ -192,6 +198,61 @@ class UserProfileCreate(BaseModel):
                 pass
         
         return v
+
+    @field_validator('shoe_size_value')
+    @classmethod
+    def validate_shoe_size(cls, v: Optional[str]) -> Optional[str]:
+        """Validate shoe size: numeric only (e.g., '7', '7.5', '40')."""
+        if v is None:
+            return v
+        
+        # Numeric with optional decimal (e.g., "7", "7.5", "40")
+        if re.match(r'^\d+(\.\d+)?$', v):
+            return v
+        
+        raise ValueError(
+            f"Invalid shoe size: '{v}'. Must be numeric (e.g., '7', '7.5', '40')"
+        )
+
+    @field_validator('shirt_size_value', 'jacket_size_value', 'top_size_value', 'dress_size_value')
+    @classmethod
+    def validate_clothing_size(cls, v: Optional[str]) -> Optional[str]:
+        """Validate clothing size format: letter sizes (XS-XXXL) or numeric."""
+        if v is None:
+            return v
+        
+        # Letter sizes - normalize to uppercase
+        letter_sizes = {'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'}
+        if v.upper() in letter_sizes:
+            return v.upper()
+        
+        # Numeric sizes (e.g., "10", "12", "14")
+        if re.match(r'^\d+(\.\d+)?$', v):
+            return v
+        
+        raise ValueError(
+            f"Invalid size format: '{v}'. Must be letter size (XS-XXXL) or numeric (e.g., '10')"
+        )
+
+    @field_validator('pants_size_value')
+    @classmethod
+    def validate_pants_size(cls, v: Optional[str]) -> Optional[str]:
+        """Validate pants size: numeric waist or combined waist x inseam."""
+        if v is None:
+            return v
+        
+        # Numeric waist size
+        if re.match(r'^\d+$', v):
+            return v
+        
+        # Combined waist x inseam
+        if re.match(r'^\d+x\d+$', v):
+            return v
+        
+        raise ValueError(
+            f"Invalid pants size: '{v}'. Must be numeric (e.g., '32') "
+            f"or combined (e.g., '32x34')"
+        )
 
     @model_validator(mode='after')
     def validate_size_standards(self) -> 'UserProfileCreate':

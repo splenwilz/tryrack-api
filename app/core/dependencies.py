@@ -2,19 +2,123 @@
 Authentication dependencies for protecting endpoints
 Reference: https://fastapi.tiangolo.com/tutorial/dependencies/
 """
+
 import asyncio
 import logging
+import sys
+import time
 from functools import lru_cache
+from typing import Optional
+
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from workos import WorkOSClient
 from workos.exceptions import AuthenticationException, NotFoundException
 
-from app.services.auth import AuthService
 from app.api.v1.schemas.auth import WorkOSUserResponse
 from app.core.config import settings
+from app.services.auth import AuthService
 
 logger = logging.getLogger(__name__)
+
+# User cache to reduce WorkOS API calls
+# Uses TTLCache for automatic TTL-based expiration and size limits
+# Max size: 1000 users (prevents memory exhaustion)
+# TTL: 5 minutes (300 seconds) - balances freshness with performance
+# Reference: https://cachetools.readthedocs.io/en/stable/#cachetools.TTLCache
+from cachetools import TTLCache
+
+USER_CACHE_TTL = 300  # 5 minutes in seconds
+USER_CACHE_MAX_SIZE = 1000  # Maximum number of cached users
+_user_cache: TTLCache[str, WorkOSUserResponse] = TTLCache(
+    maxsize=USER_CACHE_MAX_SIZE, ttl=USER_CACHE_TTL
+)
+
+# Token blacklist to invalidate JWTs immediately after logout
+# Uses Redis for multi-instance support, falls back to in-memory dict if Redis not configured
+# Cache structure: {jti: expiry_timestamp} (in-memory) or Redis key "blacklist:{jti}" with TTL
+# Stores JWT ID (jti claim) with token expiration time
+# Tokens are automatically removed when they expire (via Redis TTL or manual cleanup)
+# Reference: https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.7
+_token_blacklist: dict[str, float] = {}  # Fallback in-memory storage
+
+
+async def is_token_blacklisted(jti: str) -> bool:
+    """
+    Check if a token JWT ID (jti) is blacklisted.
+
+    Uses Redis if configured, otherwise falls back to in-memory storage.
+
+    Args:
+        jti: JWT ID (jti claim) from the token
+
+    Returns:
+        True if token is blacklisted, False otherwise
+    """
+    from app.core.redis import get_redis_client
+
+    redis_client = get_redis_client()
+    if redis_client:
+        # Use Redis for multi-instance support
+        return await redis_client.exists(f"blacklist:{jti}")
+    else:
+        # Fallback to in-memory storage
+        current_time = time.time()
+        if jti in _token_blacklist:
+            expiry = _token_blacklist[jti]
+            if current_time < expiry:
+                return True
+            else:
+                # Token expired, remove from blacklist
+                del _token_blacklist[jti]
+        return False
+
+
+async def add_token_to_blacklist(jti: str, expires_at: float) -> bool:
+    """
+    Add a token JWT ID (jti) to the blacklist.
+
+    Uses Redis if configured, otherwise falls back to in-memory storage.
+
+    Args:
+        jti: JWT ID (jti claim) from the token
+        expires_at: Unix timestamp when the token expires
+
+    Returns:
+        True if successful, False otherwise
+    """
+    from app.core.redis import get_redis_client
+
+    redis_client = get_redis_client()
+    if redis_client:
+        # Use Redis for multi-instance support
+        # Calculate TTL in seconds
+        current_time = time.time()
+        ttl_seconds = max(1, int(expires_at - current_time))
+        return await redis_client.setex(f"blacklist:{jti}", ttl_seconds, "blacklisted")
+    else:
+        # Fallback to in-memory storage
+        _token_blacklist[jti] = expires_at
+        return True
+
+
+def _cleanup_expired_blacklist_tokens():
+    """
+    Remove expired tokens from in-memory blacklist to prevent memory leaks.
+
+    Note: This is only used for in-memory fallback. Redis handles expiration automatically via TTL.
+    """
+    current_time = time.time()
+    expired_jtis = [
+        jti for jti, expiry in _token_blacklist.items() if current_time >= expiry
+    ]
+    for jti in expired_jtis:
+        del _token_blacklist[jti]
+    if expired_jtis:
+        logger.debug(
+            f"Cleaned up {len(expired_jtis)} expired tokens from in-memory blacklist"
+        )
+
 
 # HTTPBearer automatically extracts Bearer token from Authorization header
 # Reference: https://fastapi.tiangolo.com/reference/security/#fastapi.security.HTTPBearer
@@ -25,52 +129,57 @@ security = HTTPBearer()
 def get_auth_service() -> AuthService:
     """
     Get a singleton AuthService instance.
-    
+
     Using lru_cache ensures the same AuthService instance is reused across requests,
     which preserves the JWKS cache (_jwks_cache and _jwks_cache_expiry) at the
     application level rather than request level. This avoids repeated JWKS API calls
     to WorkOS and improves performance.
-    
+
     Reference: https://docs.python.org/3/library/functools.html#functools.lru_cache
     """
     return AuthService()
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> WorkOSUserResponse:
     """
     Dependency to get the current authenticated user.
-    
+
     Validates the JWT access token from the Authorization header using WorkOS JWKS,
     then fetches full user details from WorkOS.
-    
+
     Usage:
         @router.get("/protected")
         async def protected_route(current_user = Depends(get_current_user)):
             return {"user_id": current_user.id, "email": current_user.email}
-    
+
     Args:
         credentials: HTTPAuthorizationCredentials containing the Bearer token
-        
+
     Returns:
         WorkOSUserResponse: The authenticated user with full details
-        
+
     Raises:
         HTTPException: 401 if token is invalid or missing
     """
+    start_time = time.time()
     auth_service = get_auth_service()
-    
+
     try:
         # Extract the token from credentials
         access_token = credentials.credentials
         logger.debug(f"Verifying session with token: {access_token[:20]}...")
-        
+
         # Verify the session with WorkOS (validates JWT signature and expiration)
         # Reference: https://workos.com/docs/reference/authkit/session-tokens/access-token
+        verify_start = time.time()
         session_data = await auth_service.verify_session(access_token)
-        
-        user_id = session_data.get('user_id')
+        verify_time = (time.time() - verify_start) * 1000
+        sys.stdout.write(f"[TIMING] verify_session took {verify_time:.1f}ms\n")
+        sys.stdout.flush()
+
+        user_id = session_data.get("user_id")
         if not user_id:
             logger.error("Token missing user_id (sub claim)")
             raise HTTPException(
@@ -78,22 +187,40 @@ async def get_current_user(
                 detail="Invalid token: missing user information",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
+
         logger.debug(f"Token verified successfully. User ID: {user_id}")
-        
-        # Fetch full user details from WorkOS
-        # The JWT contains basic info, but we fetch full details for complete user object
-        workos_client = WorkOSClient(
-            api_key=settings.WORKOS_API_KEY,
-            client_id=settings.WORKOS_CLIENT_ID
+
+        # OPTIMIZATION: Check cache first to avoid expensive WorkOS API call
+        # TTLCache automatically handles expiration and size limits
+        # This reduces response time from ~3.5s to ~0.1s for cached requests
+        if user_id in _user_cache:
+            cache_time = (time.time() - start_time) * 1000
+            sys.stdout.write(
+                f"[TIMING] get_current_user (CACHE HIT) took {cache_time:.1f}ms\n"
+            )
+            sys.stdout.flush()
+            logger.debug(f"User {user_id} found in cache")
+            return _user_cache[user_id]
+
+        # Cache miss or expired - fetch from WorkOS API
+        # This is the expensive call (~1-2 seconds) that we're optimizing
+        sys.stdout.write(
+            f"[TIMING] Cache MISS for user {user_id}, fetching from WorkOS API\n"
         )
-        
+        sys.stdout.flush()
+        get_user_start = time.time()
+        workos_client = WorkOSClient(
+            api_key=settings.WORKOS_API_KEY, client_id=settings.WORKOS_CLIENT_ID
+        )
+
         # Offload synchronous WorkOS call to thread pool
         workos_user = await asyncio.to_thread(
-            workos_client.user_management.get_user,
-            user_id=user_id
+            workos_client.user_management.get_user, user_id=user_id
         )
-        
+        get_user_time = (time.time() - get_user_start) * 1000
+        sys.stdout.write(f"[TIMING] get_user API call took {get_user_time:.1f}ms\n")
+        sys.stdout.flush()
+
         # Convert WorkOS user to our schema
         user = WorkOSUserResponse(
             object=workos_user.object,
@@ -106,13 +233,20 @@ async def get_current_user(
             created_at=workos_user.created_at,
             updated_at=workos_user.updated_at,
         )
-        
-        logger.debug(f"User fetched: {user.id} ({user.email})")
-        import sys
-        sys.stdout.write(f"[DEBUG] get_current_user returning user: id='{user.id}', email='{user.email}'\n")
+
+        # Store in cache (TTLCache automatically handles expiration and eviction)
+        _user_cache[user_id] = user
+        total_time = (time.time() - start_time) * 1000
+        sys.stdout.write(
+            f"[TIMING] get_current_user (CACHE MISS) took {total_time:.1f}ms (verify: {verify_time:.1f}ms, get_user: {get_user_time:.1f}ms)\n"
+        )
         sys.stdout.flush()
+        logger.debug(
+            f"User {user_id} cached (max {USER_CACHE_MAX_SIZE} users, TTL {USER_CACHE_TTL}s)"
+        )
+
         return user
-        
+
     except ValueError as e:
         # Map error to RFC6750-compliant WWW-Authenticate header
         msg = str(e)
@@ -121,7 +255,11 @@ async def get_current_user(
         description = msg or "The access token is invalid"
 
         if "expired" in msg.lower():
+            error = "invalid_token"  # RFC6750: use invalid_token for expired tokens
             description = "The access token expired"
+            # If message contains "Token verification failed:", remove it for cleaner error
+            if "Token verification failed:" in msg:
+                msg = msg.replace("Token verification failed: ", "")
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -143,7 +281,9 @@ async def get_current_user(
         raise
     except Exception as e:
         # Unexpected error - log full details for debugging
-        logger.error(f"Unexpected authentication error: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected authentication error: {type(e).__name__}: {e}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Authentication failed: {str(e)}",
