@@ -6,7 +6,17 @@ Reference: https://fastapi.tiangolo.com/tutorial/bigger-applications/
 
 from fastapi import APIRouter
 
-from app.api.v1.routes import auth, health, image, task, user, virtual_try_on, wardrobe
+from app.api.v1.routes import (
+    auth,
+    catalog,
+    health,
+    image,
+    shop,
+    task,
+    user,
+    virtual_try_on,
+    wardrobe,
+)
 from app.core.config import settings
 
 # Create main API router for v1
@@ -19,6 +29,8 @@ api_router.include_router(auth.router)
 api_router.include_router(user.router)
 api_router.include_router(image.router)
 api_router.include_router(wardrobe.router)
+api_router.include_router(catalog.router)
+api_router.include_router(shop.router)
 api_router.include_router(virtual_try_on.router)
 api_router.include_router(task.router)
 api_router.include_router(health.router)

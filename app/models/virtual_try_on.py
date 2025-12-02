@@ -58,7 +58,7 @@ class VirtualTryOn(Base):
     selected_items: Mapped[List[dict]] = mapped_column(
         JSON,
         nullable=False,
-        comment="Snapshot of the wardrobe items selected for this session",
+        comment="Snapshot of items selected for this session (wardrobe items and/or boutique products)",
     )
 
     created_at: Mapped[datetime] = mapped_column(

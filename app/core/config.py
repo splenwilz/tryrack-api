@@ -4,8 +4,10 @@ Handles environment variables and configuration management
 All configuration values should be set in .env file or environment variables
 Reference: https://fastapi.tiangolo.com/advanced/settings/
 """
+
 import json
-from pydantic import Field, ConfigDict
+
+from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
 
 
@@ -13,15 +15,16 @@ class Settings(BaseSettings):
     """
     Application settings loaded from environment variables
     Uses pydantic BaseSettings for validation and type conversion
-    
+
     All values should be set in .env file (see .env.example for template)
     """
+
     # API Configuration
     # These can have defaults but should be overridden in .env
     API_V1_PREFIX: str = "/api/v1"
     PROJECT_NAME: str = "FastAPI Auth Starter"
     VERSION: str = "0.1.0"
-    
+
     # Database Configuration
     # PostgreSQL connection string format: postgresql+asyncpg://user:password@host:port/dbname
     # Reference: https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls
@@ -29,107 +32,90 @@ class Settings(BaseSettings):
     # Note: Special characters in password must be URL-encoded (e.g., ! = %21)
     DATABASE_URL: str = Field(
         ...,
-        description="PostgreSQL database URL. Must be set via environment variable."
+        description="PostgreSQL database URL. Must be set via environment variable.",
     )
 
     # WorkOS Configuration
     # WorkOS API key for user management
     # Reference: https://workos.com/docs/reference/api-reference/user-management
     WORKOS_API_KEY: str = Field(
-        ...,
-        description="WorkOS API key. Must be set via environment variable."
+        ..., description="WorkOS API key. Must be set via environment variable."
     )
     WORKOS_CLIENT_ID: str = Field(
-        ...,
-        description="WorkOS client ID. Must be set via environment variable."
+        ..., description="WorkOS client ID. Must be set via environment variable."
     )
 
     WORKOS_DEFAULT_CONNECTION_ID: str | None = Field(
         None,
-        description="Default WorkOS SSO connection ID. Can be overridden by frontend."
+        description="Default WorkOS SSO connection ID. Can be overridden by frontend.",
     )
     # Allowed redirect URIs (comma-separated or JSON array)
     # Security: Only these URIs are allowed for OAuth redirects
     WORKOS_ALLOWED_REDIRECT_URIS: str = Field(
-        ...,
-        description="Comma-separated list of allowed redirect URIs for OAuth"
+        ..., description="Comma-separated list of allowed redirect URIs for OAuth"
     )
-    
+
     # AWS S3 Configuration
-    AWS_ACCESS_KEY_ID: str = Field(
-        ...,
-        description="AWS access key ID for S3"
-    )
-    AWS_SECRET_ACCESS_KEY: str = Field(
-        ...,
-        description="AWS secret access key for S3"
-    )
-    AWS_REGION: str = Field(
-        default="us-east-1",
-        description="AWS region for S3 bucket"
-    )
+    AWS_ACCESS_KEY_ID: str = Field(..., description="AWS access key ID for S3")
+    AWS_SECRET_ACCESS_KEY: str = Field(..., description="AWS secret access key for S3")
+    AWS_REGION: str = Field(default="us-east-1", description="AWS region for S3 bucket")
     AWS_S3_BUCKET_NAME: str = Field(
-        ...,
-        description="S3 bucket name for storing uploaded images"
+        ..., description="S3 bucket name for storing uploaded images"
     )
     AWS_S3_BASE_URL: str | None = Field(
         None,
-        description="Base URL for S3 objects (e.g., https://bucket.s3.amazonaws.com). If not set, will be generated from bucket name and region."
+        description="Base URL for S3 objects (e.g., https://bucket.s3.amazonaws.com). If not set, will be generated from bucket name and region.",
     )
 
-    ENVIRONMENT: str = Field(
-        default="development",
-        description="Environment name"
-    )
-    
+    ENVIRONMENT: str = Field(default="development", description="Environment name")
+
     # Upstash Redis Configuration
     # Used for token blacklist to support multi-instance deployments
     # Reference: https://upstash.com/docs/redis/overall/getstarted
     UPSTASH_REDIS_REST_URL: str | None = Field(
-        None,
-        description="Upstash Redis REST URL for token blacklist"
+        None, description="Upstash Redis REST URL for token blacklist"
     )
     UPSTASH_REDIS_REST_TOKEN: str | None = Field(
-        None,
-        description="Upstash Redis REST token for authentication"
+        None, description="Upstash Redis REST token for authentication"
     )
-    
+
     @property
     def allowed_redirect_uris_list(self) -> list[str]:
         """
         Parse allowed redirect URIs into a list.
-        
+
         Supports two formats:
         1. JSON array: ["https://app.example.com/callback", "https://app2.example.com/callback"]
         2. Comma-separated: https://app.example.com/callback,https://app2.example.com/callback
-        
+
         Reference: https://docs.python.org/3/library/json.html
         """
         raw = self.WORKOS_ALLOWED_REDIRECT_URIS.strip()
         if not raw:
             return []
-        
+
         # Try parsing as JSON first (supports JSON array format)
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             # Fall back to comma-separated string format
             return [uri.strip() for uri in raw.split(",") if uri.strip()]
-        
+
         # Handle parsed JSON result
         if isinstance(parsed, str):
             return [parsed.strip()]
         if isinstance(parsed, list):
             return [str(uri).strip() for uri in parsed if str(uri).strip()]
-        
+
         raise ValueError(
             "WORKOS_ALLOWED_REDIRECT_URIS must be a JSON array or comma-separated string"
         )
+
     # Alembic Configuration
     # Used for database migrations
     # Reference: https://alembic.sqlalchemy.org/en/latest/tutorial.html
     ALEMBIC_CONFIG: str = "alembic.ini"
-    
+
     # Pydantic v2 configuration
     # Reference: https://docs.pydantic.dev/latest/api/config/
     model_config = ConfigDict(
@@ -143,4 +129,3 @@ class Settings(BaseSettings):
 # Global settings instance
 # Import this in other modules to access configuration
 settings = Settings()
-
