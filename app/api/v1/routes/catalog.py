@@ -223,14 +223,17 @@ async def update_catalog_item(
 
     **Authorization:**
     - Requires authentication
-    - TODO: Add admin/owner role check
+    - Users can only update their own catalog items
     """
     catalog_service = CatalogService()
     try:
-        item = await catalog_service.update_catalog_item(db, item_id, item_data)
+        item = await catalog_service.update_catalog_item(
+            db, item_id, item_data, current_user.id
+        )
         if not item:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Catalog item not found"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Catalog item not found or you don't have permission to update it",
             )
         logger.info(f"Updated catalog item {item_id} for user: {current_user.id}")
         return item
@@ -274,14 +277,15 @@ async def delete_catalog_item(
 
     **Authorization:**
     - Requires authentication
-    - TODO: Add admin/owner role check
+    - Users can only delete their own catalog items
     """
     catalog_service = CatalogService()
     try:
-        deleted = await catalog_service.delete_catalog_item(db, item_id)
+        deleted = await catalog_service.delete_catalog_item(db, item_id, current_user.id)
         if not deleted:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Catalog item not found"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Catalog item not found or you don't have permission to delete it",
             )
         logger.info(f"Deleted catalog item {item_id} for user: {current_user.id}")
         return None

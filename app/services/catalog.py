@@ -129,6 +129,7 @@ class CatalogService:
         db: AsyncSession,
         item_id: int,
         item_data: CatalogItemUpdate,
+        user_id: str,
     ) -> Optional[CatalogItem]:
         """
         Update a catalog item.
@@ -139,15 +140,42 @@ class CatalogService:
             db: Database session
             item_id: Item ID
             item_data: Update data (all fields optional)
+            user_id: User ID (for authorization - users can only update their own items)
 
         Returns:
-            Updated catalog item if found, None otherwise
+            Updated catalog item if found and authorized, None otherwise
         """
         catalog_item = await self.get_catalog_item(db, item_id)
         if not catalog_item:
             return None
 
+        # Verify ownership
+        if catalog_item.user_id != user_id:
+            logger.warning(
+                f"User {user_id} attempted to update catalog item {item_id} owned by {catalog_item.user_id}"
+            )
+            return None
+
         update_data = item_data.model_dump(exclude_unset=True)
+
+        # Validate discount_price against final price (from update or existing item)
+        # This handles partial updates where only discount_price or only price is updated
+        if "discount_price" in update_data or "price" in update_data:
+            # Determine the final values: use updated values if provided, otherwise existing values
+            final_price = (
+                update_data.get("price")
+                if "price" in update_data
+                else catalog_item.price
+            )
+            final_discount_price = (
+                update_data.get("discount_price")
+                if "discount_price" in update_data
+                else catalog_item.discount_price
+            )
+            # Validate if both prices exist
+            if final_price is not None and final_discount_price is not None:
+                if final_discount_price >= final_price:
+                    raise ValueError("Discount price must be less than regular price")
 
         # Convert enum to string value for status field
         if "status" in update_data and isinstance(update_data["status"], CatalogItemStatus):
@@ -169,7 +197,7 @@ class CatalogService:
             raise ValueError("Failed to update catalog item due to database constraints") from e
 
     async def delete_catalog_item(
-        self, db: AsyncSession, item_id: int
+        self, db: AsyncSession, item_id: int, user_id: str
     ) -> bool:
         """
         Delete a catalog item.
@@ -177,16 +205,25 @@ class CatalogService:
         Args:
             db: Database session
             item_id: Item ID
+            user_id: User ID (for authorization - users can only delete their own items)
 
         Returns:
-            True if deleted, False if not found
+            True if item was deleted, False if not found or not authorized
         """
         catalog_item = await self.get_catalog_item(db, item_id)
         if not catalog_item:
             return False
 
+        # Verify ownership
+        if catalog_item.user_id != user_id:
+            logger.warning(
+                f"User {user_id} attempted to delete catalog item {item_id} owned by {catalog_item.user_id}"
+            )
+            return False
+
         await db.delete(catalog_item)
-        logger.info(f"Deleted catalog item {item_id}")
+        await db.flush()
+        logger.info(f"Deleted catalog item {item_id} for user: {user_id}")
         return True
 
     async def increment_views(

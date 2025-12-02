@@ -117,8 +117,6 @@ async def delete_virtual_try_on_session(
     # If deleted is True, either:
     # 1. Session was deleted successfully, OR
     # 2. Session didn't exist (idempotent delete - desired state already achieved)
-    logger.info(
-        "User %s deleted virtual try-on session %s", current_user.id, session_id
-    )
+    # Note: The service layer already logs the specific outcome (actual delete vs idempotent)
 
 

@@ -322,8 +322,9 @@ async def create_look(
         200: {"description": "Boutique look updated successfully"},
         400: {"description": "Invalid request data or validation error"},
         401: {"description": "Unauthorized - authentication required"},
-        403: {"description": "Forbidden - you can only update your own looks"},
-        404: {"description": "Boutique look not found"},
+        404: {
+            "description": "Boutique look not found or you don't have permission to update it"
+        },
         500: {"description": "Internal server error"},
     },
 )
@@ -394,7 +395,9 @@ async def update_look(
     responses={
         204: {"description": "Boutique look deleted successfully"},
         401: {"description": "Unauthorized - authentication required"},
-        403: {"description": "Forbidden - you can only delete your own looks"},
+        404: {
+            "description": "Boutique look not found or you don't have permission to delete it"
+        },
         404: {"description": "Boutique look not found"},
         500: {"description": "Internal server error"},
     },

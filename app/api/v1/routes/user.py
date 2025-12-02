@@ -522,10 +522,25 @@ async def update_boutique_profile(
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-async def get_user(user_id: str, db: AsyncSession = Depends(get_db)) -> UserResponse:
+async def get_user(
+    user_id: str,
+    current_user: WorkOSUserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
     """
-    Get a user by ID
+    Get a user by ID.
+
+    **Authorization:**
+    - Requires authentication
+    - Users can only access their own user data
     """
+    # Verify authorization: users can only access their own data
+    if user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own user data",
+        )
+
     user_service = UserService()
     user = await user_service.get_user(db, user_id)
     if not user:
@@ -541,12 +556,27 @@ async def get_user(user_id: str, db: AsyncSession = Depends(get_db)) -> UserResp
     summary="Update user",
     description="Update a user by ID",
     status_code=status.HTTP_200_OK,
+    responses={
+        200: {"description": "User updated successfully"},
+        400: {"description": "Invalid request data or validation error"},
+        401: {"description": "Unauthorized - authentication required"},
+        403: {"description": "Forbidden - you can only update your own user data"},
+        404: {"description": "User not found"},
+        500: {"description": "Internal server error"},
+    },
 )
 async def update_user(
-    user_id: str, user_data: UserUpdate, db: AsyncSession = Depends(get_db)
+    user_id: str,
+    user_data: UserUpdate,
+    current_user: WorkOSUserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Update a user by ID
+    Update a user by ID.
+
+    **Authorization:**
+    - Requires authentication
+    - Users can only update their own user data
 
     Args:
         user_id: ID of the user to update
@@ -555,6 +585,13 @@ async def update_user(
     Returns:
         Updated UserResponse object
     """
+    # Verify authorization: users can only update their own data
+    if user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only update your own user data",
+        )
+
     user_service = UserService()
     try:
         user = await user_service.update_user(db, user_id, user_data)
@@ -583,13 +620,23 @@ async def update_user(
     description="Delete a user by ID",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
+        401: {"description": "Unauthorized - authentication required"},
+        403: {"description": "Forbidden - you can only delete your own user data"},
         404: {"description": "User not found"},
         204: {"description": "User deleted successfully"},
     },
 )
-async def delete_user(user_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_user(
+    user_id: str,
+    current_user: WorkOSUserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
-    Delete a user by ID
+    Delete a user by ID.
+
+    **Authorization:**
+    - Requires authentication
+    - Users can only delete their own user data
 
     Args:
         user_id: ID of the user to delete
@@ -597,6 +644,13 @@ async def delete_user(user_id: str, db: AsyncSession = Depends(get_db)):
     Returns:
         None
     """
+    # Verify authorization: users can only delete their own data
+    if user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only delete your own user data",
+        )
+
     user_service = UserService()
     try:
         deleted = await user_service.delete_user(db, user_id)

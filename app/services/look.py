@@ -106,6 +106,18 @@ class LookService:
         # Set user_id (boutique owner) - required for linking look to boutique
         look_dict["user_id"] = user_id
 
+        # Validate that all product_ids exist and belong to the boutique owner
+        if "product_ids" in look_dict and look_dict["product_ids"]:
+            items = await self.get_catalog_items_by_ids(db, look_dict["product_ids"])
+            if len(items) != len(look_dict["product_ids"]):
+                raise ValueError("One or more product IDs are invalid or do not exist")
+            # Verify ownership
+            for item in items:
+                if item.user_id != user_id:
+                    raise ValueError(
+                        "One or more products do not belong to your boutique"
+                    )
+
         boutique_look = BoutiqueLook(**look_dict)
         db.add(boutique_look)
 
@@ -153,6 +165,18 @@ class LookService:
 
         # Update only provided fields
         update_dict = look_data.model_dump(exclude_unset=True)
+
+        # Validate product_ids if they're being updated
+        if "product_ids" in update_dict and update_dict["product_ids"]:
+            items = await self.get_catalog_items_by_ids(db, update_dict["product_ids"])
+            if len(items) != len(update_dict["product_ids"]):
+                raise ValueError("One or more product IDs are invalid or do not exist")
+            # Verify ownership
+            for item in items:
+                if item.user_id != user_id:
+                    raise ValueError(
+                        "One or more products do not belong to your boutique"
+                    )
 
         for field, value in update_dict.items():
             setattr(existing_look, field, value)
