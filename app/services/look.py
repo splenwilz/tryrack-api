@@ -197,9 +197,7 @@ class LookService:
                 "Failed to update boutique look due to database constraints"
             ) from e
 
-    async def delete_look(
-        self, db: AsyncSession, look_id: int, user_id: str
-    ) -> bool:
+    async def delete_look(self, db: AsyncSession, look_id: int, user_id: str) -> bool:
         """
         Delete a boutique look.
 
@@ -264,7 +262,9 @@ class LookService:
         for item in items:
             # Use discount_price if available and less than regular price, otherwise use price
             item_price = (
-                item.discount_price if item.discount_price and item.discount_price < item.price else item.price
+                item.discount_price
+                if item.discount_price and item.discount_price < item.price
+                else item.price
             )
             total += item_price
 
@@ -300,7 +300,8 @@ class LookService:
 
         # Sort items to match the order of product_ids
         item_dict = {item.id: item for item in items}
-        sorted_items = [item_dict[int(pid)] for pid in product_ids if int(pid) in item_dict]
+        sorted_items = [
+            item_dict[int(pid)] for pid in product_ids if int(pid) in item_dict
+        ]
 
         return sorted_items
-
