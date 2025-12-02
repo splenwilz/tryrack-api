@@ -78,3 +78,47 @@ async def get_virtual_try_on_session(
     return session
 
 
+@router.delete(
+    "/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a virtual try-on session",
+    description="Delete a virtual try-on session. Users can only delete their own sessions.",
+    responses={
+        204: {"description": "Session deleted successfully"},
+        401: {"description": "Unauthorized - authentication required"},
+        404: {"description": "Virtual try-on session not found or you don't have permission to delete it"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def delete_virtual_try_on_session(
+    session_id: int,
+    current_user: WorkOSUserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Delete a virtual try-on session.
+
+    **Authorization:**
+    - Requires authentication
+    - Users can only delete their own sessions
+
+    **Returns:**
+    - 204 No Content on successful deletion
+    - 404 Not Found if session doesn't exist or user doesn't have permission
+    """
+    service = VirtualTryOnService()
+    deleted = await service.delete_session(db, session_id, current_user.id)
+    if not deleted:
+        # Only return 404 if session exists but belongs to different user (permission denied)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You don't have permission to delete this virtual try-on session",
+        )
+    # If deleted is True, either:
+    # 1. Session was deleted successfully, OR
+    # 2. Session didn't exist (idempotent delete - desired state already achieved)
+    logger.info(
+        "User %s deleted virtual try-on session %s", current_user.id, session_id
+    )
+
+
