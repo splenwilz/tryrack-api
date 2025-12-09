@@ -10,6 +10,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
 if TYPE_CHECKING:
+    from app.models.boutique import Boutique
+    from app.models.catalog import CatalogItem, CatalogReview
+    from app.models.look import BoutiqueLook
+    from app.models.review import Review
     from app.models.virtual_try_on import VirtualTryOn
     from app.models.wardrobe import Wardrobe
 
@@ -81,6 +85,28 @@ class User(Base):
     virtual_try_on_sessions: Mapped[list["VirtualTryOn"]] = relationship(
         "VirtualTryOn",
         back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    # One-to-many relationship to Catalog reviews
+    catalog_reviews: Mapped[list["CatalogReview"]] = relationship(
+        "CatalogReview",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    # One-to-many relationship to unified reviews (products and boutiques)
+    reviews: Mapped[list["Review"]] = relationship(
+        "Review",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    # One-to-many relationship to owned boutiques (user can own multiple boutiques)
+    owned_boutiques: Mapped[list["Boutique"]] = relationship(
+        "Boutique",
+        foreign_keys="Boutique.owner_id",
+        back_populates="owner",
         cascade="all, delete-orphan",
     )
 
@@ -244,3 +270,195 @@ class UserProfile(Base):
     def __repr__(self) -> str:
         "String representation of user profile"
         return f"<UserProfile(id={self.id}, user_id={self.user_id}, created_at={self.created_at})>"
+
+
+class BoutiqueProfile(Base):
+    """
+    Boutique profile model for store/business information.
+
+    Single model for both onboarding and profile data. Most fields are nullable
+    to allow minimal onboarding (just essential fields) and gradual profile completion.
+
+    One-to-one relationship with Boutique - each boutique has one profile.
+
+    Attributes:
+        id: Primary key
+        boutique_id: Foreign key to boutiques table (unique, one profile per boutique)
+        boutique: Relationship to Boutique model
+
+        # Business Information (Essential for onboarding - nullable for flexibility)
+        business_name: Name of the boutique/business
+        business_address: Business address (street, city, state, zip, country)
+
+        # Detailed Business Information (Profile - all nullable)
+        business_category: Category of the boutique/business
+        business_city: City
+        business_state: State/province
+        business_zip: ZIP/postal code
+        business_country: Country
+        business_phone: Business phone number
+        business_email: Business email (may differ from user email)
+        business_website: Business website URL
+        business_social_media: JSON object with social media links
+        logo_url: URL to boutique/business logo image
+
+        # Preferences/Settings (Profile - all nullable)
+        currency: Currency code (e.g., "USD", "EUR", "GBP")
+        timezone: Timezone (e.g., "America/New_York", "Europe/London")
+        language: Language code (e.g., "en", "fr", "es")
+
+        # Timestamps
+        created_at: Timestamp when profile was created
+        updated_at: Timestamp when profile was last updated
+
+    Note: Overall onboarding status is tracked in User.is_onboarded
+
+    Reference:
+        - https://docs.sqlalchemy.org/en/21/orm/basic_relationships.html#one-to-one
+        - https://docs.sqlalchemy.org/en/21/core/constraints.html#unique-constraint
+    """
+
+    __tablename__ = "boutique_profiles"
+
+    # Table-level unique constraint for one-to-one relationship
+    __table_args__ = (
+        UniqueConstraint("boutique_id", name="uq_boutique_profiles_boutique_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # Relationships - one-to-one with Boutique
+    boutique_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("boutiques.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        comment="Boutique ID (unique - one profile per boutique)",
+    )
+    boutique: Mapped["Boutique"] = relationship(
+        "Boutique", back_populates="boutique_profile"
+    )
+
+    # Business Information (Essential for onboarding - nullable for flexibility)
+    business_name: Mapped[Optional[str]] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="Name of the boutique/business",
+    )
+    business_address: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="Business address (street, city, state, zip, country)",
+    )
+
+    # Detailed Business Information (Profile - all nullable)
+    business_category: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Category of the boutique/business",
+    )
+    business_city: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="City",
+    )
+    business_state: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="State/province",
+    )
+    business_zip: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="ZIP/postal code",
+    )
+    business_country: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Country",
+    )
+    # Geographic coordinates for proximity search
+    latitude: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        comment="Business latitude in decimal degrees (for proximity search). Example: 40.7128 for New York",
+    )
+    longitude: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        comment="Business longitude in decimal degrees (for proximity search). Example: -74.0060 for New York",
+    )
+    business_phone: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Business phone number",
+    )
+    business_email: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Business email (may differ from user email)",
+    )
+    business_website: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="Business website URL",
+    )
+    business_social_media: Mapped[Optional[dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Social media links in JSON format (e.g., {'instagram': '...', 'facebook': '...'})",
+    )
+    logo_url: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="URL to boutique/business logo image",
+    )
+    cover_image_url: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="URL to boutique cover/hero image (uploaded by boutique owner)",
+    )
+    featured: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="Whether the boutique is featured (admin-managed flag)",
+    )
+    # Preferences/Settings (Profile - all nullable)
+    currency: Mapped[Optional[str]] = mapped_column(
+        String(3),
+        nullable=True,
+        comment="Currency code (e.g., 'USD', 'EUR', 'GBP')",
+    )
+    timezone: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="Timezone (e.g., 'America/New_York', 'Europe/London')",
+    )
+    language: Mapped[Optional[str]] = mapped_column(
+        String(10),
+        nullable=True,
+        comment="Language code (e.g., 'en', 'fr', 'es')",
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        comment="Timestamp when profile was created",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+        comment="Timestamp when profile was last updated",
+    )
+
+    def __repr__(self) -> str:
+        """String representation of BoutiqueProfile."""
+        return (
+            f"<BoutiqueProfile(id={self.id}, user_id={self.user_id}, "
+            f"business_name={self.business_name})>"
+        )

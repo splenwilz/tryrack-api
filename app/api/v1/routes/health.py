@@ -106,5 +106,5 @@ async def readiness_check() -> HealthResponse:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Service is not ready - database unavailable"
-        )
+    )
 

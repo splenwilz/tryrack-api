@@ -3,12 +3,12 @@ FastAPI application entry point
 Main application factory and configuration
 Reference: https://fastapi.tiangolo.com/tutorial/bigger-applications/
 """
+
 import logging
-from contextlib import asynccontextmanager
-from debug_toolbar.middleware import DebugToolbarMiddleware
-
-
 import sys
+from contextlib import asynccontextmanager
+
+from debug_toolbar.middleware import DebugToolbarMiddleware
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -24,32 +24,27 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup and shutdown events
-    Validates database connection on startup (only in production)
+    Validates database connection on startup
     Reference: https://fastapi.tiangolo.com/advanced/events/
     """
-    # Startup: Test database connection (only in production)
-    # In development, skip connection check to avoid noisy warnings
-    # when database is not accessible locally
-    if settings.ENVIRONMENT != "development":
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text("SELECT 1"))
-            logger.info("✓ Database connection successful")
-        except Exception as e:
-            logger.error(f"✗ Database connection failed: {e}")
-            logger.error(
-                "Please check:\n"
-                "1. DATABASE_URL is set correctly in Vercel environment variables\n"
-                "2. AWS RDS security group allows connections from Vercel IP ranges\n"
-                "3. Database is accessible and credentials are correct"
-            )
-            # Don't raise - let the app start but connections will fail
-            # This allows health checks to work
-    else:
-        logger.debug("Skipping database connection check in development mode")
-    
+    # Startup: Test database connection
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        logger.info("✓ Database connection successful")
+    except Exception as e:
+        logger.error(f"✗ Database connection failed: {e}")
+        logger.error(
+            "Please check:\n"
+            "1. DATABASE_URL is set correctly in Vercel environment variables\n"
+            "2. AWS RDS security group allows connections from Vercel IP ranges\n"
+            "3. Database is accessible and credentials are correct"
+        )
+        # Don't raise - let the app start but connections will fail
+        # This allows health checks to work
+
     yield
-    
+
     # Shutdown: Dispose of database connections
     await engine.dispose()
     logger.info("Database connections closed")
@@ -64,11 +59,10 @@ app = FastAPI(
     docs_url="/docs",  # Swagger UI documentation
     redoc_url="/redoc",  # ReDoc documentation
     lifespan=lifespan,  # Add lifespan for startup/shutdown events
-    debug=settings.ENVIRONMENT == 'development',
+    debug=settings.ENVIRONMENT == "development",
 )
-if(settings.ENVIRONMENT == 'development'):
+if settings.ENVIRONMENT == "development":
     app.add_middleware(DebugToolbarMiddleware)
-
 
 
 allowed_origins = [
@@ -112,4 +106,3 @@ async def root():
         "version": settings.VERSION,
         "docs": "/docs",
     }
-
