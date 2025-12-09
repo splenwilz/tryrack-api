@@ -84,9 +84,13 @@ async def get_virtual_try_on_session(
     summary="Delete a virtual try-on session",
     description="Delete a virtual try-on session. Users can only delete their own sessions.",
     responses={
-        204: {"description": "Session deleted successfully"},
+        204: {
+            "description": "Session deleted successfully (or did not exist; delete is idempotent)"
+        },
         401: {"description": "Unauthorized - authentication required"},
-        404: {"description": "Virtual try-on session not found or you don't have permission to delete it"},
+        404: {
+            "description": "You don't have permission to delete this virtual try-on session"
+        },
         500: {"description": "Internal server error"},
     },
 )
@@ -103,8 +107,8 @@ async def delete_virtual_try_on_session(
     - Users can only delete their own sessions
 
     **Returns:**
-    - 204 No Content on successful deletion
-    - 404 Not Found if session doesn't exist or user doesn't have permission
+    - 204 No Content on successful deletion (including when the session does not exist - idempotent behavior)
+    - 404 Not Found if you don't have permission to delete the session (session exists but belongs to another user)
     """
     service = VirtualTryOnService()
     deleted = await service.delete_session(db, session_id, current_user.id)

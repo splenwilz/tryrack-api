@@ -400,6 +400,14 @@ class BoutiqueProfileBase(BaseModel):
     logo_url: Optional[str] = Field(
         None, max_length=500, description="URL to boutique/business logo image"
     )
+    cover_image_url: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="URL to boutique cover/hero image (uploaded by boutique owner)",
+    )
+    featured: bool = Field(
+        False, description="Whether the boutique is featured (admin-managed flag)"
+    )
     currency: Optional[str] = Field(
         None, max_length=3, description="Currency code (e.g., 'USD', 'EUR', 'GBP')"
     )
@@ -437,11 +445,29 @@ class BoutiqueProfileResponse(BoutiqueProfileBase):
     """
     Schema for boutique profile response.
 
-    Includes all fields from BoutiqueProfileBase plus database-generated fields.
+    Includes all fields from BoutiqueProfileBase plus database-generated fields
+    and computed fields (rating, review_count, product_count).
     """
 
     id: int = Field(..., description="Boutique profile ID")
-    user_id: str = Field(..., description="User ID")
+    boutique_id: int = Field(..., description="Boutique ID (links to Boutique entity)")
+    # Computed fields (not stored in database, computed from reviews and catalog)
+    rating: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=5.0,
+        description="Average rating from boutique reviews (computed, 0-5 stars)",
+    )
+    review_count: int = Field(
+        0,
+        ge=0,
+        description="Total number of approved reviews for this boutique (computed)",
+    )
+    product_count: int = Field(
+        0,
+        ge=0,
+        description="Total number of catalog items/products for this boutique (computed)",
+    )
     created_at: datetime = Field(..., description="Boutique profile created at")
     updated_at: datetime = Field(..., description="Boutique profile updated at")
 

@@ -17,8 +17,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.boutique import Boutique
 from app.models.catalog import CatalogItem, CatalogItemStatus
-from app.models.user import BoutiqueProfile, User
+from app.models.user import BoutiqueProfile
 
 logger = logging.getLogger(__name__)
 
@@ -97,16 +98,16 @@ class ShopService:
         Returns:
             Tuple of (list of catalog items, actual radius used)
         """
-        # Build base query: join CatalogItem with User and BoutiqueProfile
+        # Build base query: join CatalogItem with Boutique and BoutiqueProfile
         # Only include ACTIVE items
         # Use selectinload to eagerly load relationships for performance
         query = (
             select(CatalogItem)
-            .join(User, CatalogItem.user_id == User.id)
-            .outerjoin(BoutiqueProfile, User.id == BoutiqueProfile.user_id)
+            .join(Boutique, CatalogItem.boutique_id == Boutique.id)
+            .outerjoin(BoutiqueProfile, Boutique.id == BoutiqueProfile.boutique_id)
             .where(CatalogItem.status == CatalogItemStatus.ACTIVE)
             .options(
-                selectinload(CatalogItem.user).selectinload(User.boutique_profile)
+                selectinload(CatalogItem.boutique).selectinload(Boutique.boutique_profile)
             )
         )
 
@@ -130,8 +131,8 @@ class ShopService:
         if user_latitude is not None and user_longitude is not None:
             filtered_items = []
             for item in all_items:
-                # Get boutique coordinates from user's boutique_profile
-                boutique_profile = item.user.boutique_profile if item.user else None
+                # Get boutique coordinates from boutique's boutique_profile
+                boutique_profile = item.boutique.boutique_profile if item.boutique else None
                 if not boutique_profile:
                     continue
 
@@ -155,13 +156,13 @@ class ShopService:
                     filtered_items.append(item)
             all_items = filtered_items
 
-        # Round-robin selection: group by boutique (user_id) and select one from each
-        boutique_groups: dict[str, List[CatalogItem]] = {}
+        # Round-robin selection: group by boutique (boutique_id) and select one from each
+        boutique_groups: dict[int, List[CatalogItem]] = {}
         for item in all_items:
-            user_id = item.user_id
-            if user_id not in boutique_groups:
-                boutique_groups[user_id] = []
-            boutique_groups[user_id].append(item)
+            boutique_id = item.boutique_id
+            if boutique_id not in boutique_groups:
+                boutique_groups[boutique_id] = []
+            boutique_groups[boutique_id].append(item)
 
         # Round-robin: iterate through boutiques and pick one item from each
         selected_items: List[CatalogItem] = []

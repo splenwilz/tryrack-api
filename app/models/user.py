@@ -10,8 +10,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
 if TYPE_CHECKING:
+    from app.models.boutique import Boutique
     from app.models.catalog import CatalogItem, CatalogReview
     from app.models.look import BoutiqueLook
+    from app.models.review import Review
     from app.models.virtual_try_on import VirtualTryOn
     from app.models.wardrobe import Wardrobe
 
@@ -86,13 +88,6 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-    # One-to-many relationship to Catalog items (boutique owner's products)
-    catalog_items: Mapped[list["CatalogItem"]] = relationship(
-        "CatalogItem",
-        back_populates="user",
-        cascade="all, delete-orphan",
-    )
-
     # One-to-many relationship to Catalog reviews
     catalog_reviews: Mapped[list["CatalogReview"]] = relationship(
         "CatalogReview",
@@ -100,18 +95,18 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-    # One-to-one relationship to BoutiqueProfile
-    boutique_profile: Mapped[Optional["BoutiqueProfile"]] = relationship(
-        "BoutiqueProfile",
+    # One-to-many relationship to unified reviews (products and boutiques)
+    reviews: Mapped[list["Review"]] = relationship(
+        "Review",
         back_populates="user",
-        uselist=False,
         cascade="all, delete-orphan",
     )
 
-    # One-to-many relationship to BoutiqueLooks
-    boutique_looks: Mapped[list["BoutiqueLook"]] = relationship(
-        "BoutiqueLook",
-        back_populates="user",
+    # One-to-many relationship to owned boutiques (user can own multiple boutiques)
+    owned_boutiques: Mapped[list["Boutique"]] = relationship(
+        "Boutique",
+        foreign_keys="Boutique.owner_id",
+        back_populates="owner",
         cascade="all, delete-orphan",
     )
 
@@ -284,12 +279,12 @@ class BoutiqueProfile(Base):
     Single model for both onboarding and profile data. Most fields are nullable
     to allow minimal onboarding (just essential fields) and gradual profile completion.
 
-    One-to-one relationship with User - each boutique owner has one profile.
+    One-to-one relationship with Boutique - each boutique has one profile.
 
     Attributes:
         id: Primary key
-        user_id: Foreign key to users table (unique, one profile per user)
-        user: Relationship to User model
+        boutique_id: Foreign key to boutiques table (unique, one profile per boutique)
+        boutique: Relationship to Boutique model
 
         # Business Information (Essential for onboarding - nullable for flexibility)
         business_name: Name of the boutique/business
@@ -326,18 +321,23 @@ class BoutiqueProfile(Base):
     __tablename__ = "boutique_profiles"
 
     # Table-level unique constraint for one-to-one relationship
-    __table_args__ = (UniqueConstraint("user_id", name="uq_boutique_profiles_user_id"),)
+    __table_args__ = (
+        UniqueConstraint("boutique_id", name="uq_boutique_profiles_boutique_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Relationships - one-to-one with User
-    user_id: Mapped[str] = mapped_column(
-        String,
-        ForeignKey("users.id", ondelete="CASCADE"),
+    # Relationships - one-to-one with Boutique
+    boutique_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("boutiques.id", ondelete="CASCADE"),
         nullable=False,
-        comment="User ID (unique - one profile per user)",
+        unique=True,
+        comment="Boutique ID (unique - one profile per boutique)",
     )
-    user: Mapped["User"] = relationship("User", back_populates="boutique_profile")
+    boutique: Mapped["Boutique"] = relationship(
+        "Boutique", back_populates="boutique_profile"
+    )
 
     # Business Information (Essential for onboarding - nullable for flexibility)
     business_name: Mapped[Optional[str]] = mapped_column(
@@ -412,6 +412,17 @@ class BoutiqueProfile(Base):
         String(500),
         nullable=True,
         comment="URL to boutique/business logo image",
+    )
+    cover_image_url: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="URL to boutique cover/hero image (uploaded by boutique owner)",
+    )
+    featured: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="Whether the boutique is featured (admin-managed flag)",
     )
     # Preferences/Settings (Profile - all nullable)
     currency: Mapped[Optional[str]] = mapped_column(

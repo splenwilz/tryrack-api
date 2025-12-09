@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from workos.exceptions import BadRequestException
@@ -20,8 +21,10 @@ from app.api.v1.schemas.user import (
 # from app.core.exceptions import InvalidPasswordException
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_admin_user, get_auth_service, get_current_user
 from app.services.user import UserService
+
+security = HTTPBearer()
 
 logger = logging.getLogger(__name__)
 
@@ -355,10 +358,20 @@ async def get_boutique_profile(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Boutique profile not found",
             )
-        logger.info(
-            f"Boutique profile retrieved successfully for user: {current_user.id}"
+
+        # Enrich with computed stats (rating, review_count, product_count)
+        from app.api.v1.routes.boutique import enrich_boutique_profile_with_stats
+
+        enriched_profile = await enrich_boutique_profile_with_stats(
+            db, boutique_profile, boutique_profile.boutique_id
         )
-        return boutique_profile
+
+        logger.info(
+            f"Boutique profile retrieved successfully for user: {current_user.id} "
+            f"(rating={enriched_profile.rating}, reviews={enriched_profile.review_count}, "
+            f"products={enriched_profile.product_count})"
+        )
+        return enriched_profile
     except HTTPException:
         raise
     except Exception as e:
@@ -472,6 +485,7 @@ async def create_boutique_profile(
 async def update_boutique_profile(
     boutique_profile_data: BoutiqueProfileUpdate,
     current_user: WorkOSUserResponse = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> BoutiqueProfileResponse:
     """
@@ -479,9 +493,13 @@ async def update_boutique_profile(
 
     **Partial Updates**: Only provided fields will be updated. Omitted fields remain unchanged.
 
+    **Admin-Only Fields**: The `featured` field can only be updated by admins.
+    Non-admin users attempting to update `featured` will receive a 403 Forbidden error.
+
     Args:
         boutique_profile_data: Profile update data (all fields optional)
         current_user: Authenticated user (from JWT token)
+        credentials: HTTP authorization credentials (for admin check)
         db: Database session
 
     Returns:
@@ -490,10 +508,51 @@ async def update_boutique_profile(
     Raises:
         HTTPException:
             - 401 if not authenticated
+            - 403 if non-admin tries to update `featured` field
             - 404 if profile not found
             - 400 for validation errors
             - 500 for unexpected errors
     """
+    # Check if user is trying to update the `featured` field
+    update_dict = boutique_profile_data.model_dump(exclude_unset=True)
+    if "featured" in update_dict:
+        # Verify user is admin before allowing `featured` update
+        try:
+            auth_service = get_auth_service()
+            access_token = credentials.credentials
+            session_data = await auth_service.verify_session(access_token)
+
+            # Check for admin role in token claims
+            role = session_data.get("role")
+            roles = session_data.get("roles", [])
+
+            # Check if user is admin
+            is_admin = (
+                role == "admin"
+                or "admin" in roles
+                or "Admin" in roles
+                or "ADMIN" in roles
+            )
+
+            if not is_admin:
+                logger.warning(
+                    f"Non-admin user {current_user.id} attempted to update 'featured' field"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only admins can update the 'featured' field",
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error checking admin status for featured update: {e}", exc_info=True
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can update the 'featured' field",
+            ) from e
+
     user_service = UserService()
     try:
         boutique_profile = await user_service.update_boutique_profile(
@@ -504,10 +563,18 @@ async def update_boutique_profile(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Boutique profile not found",
             )
+
+        # Enrich with computed stats
+        from app.api.v1.routes.boutique import enrich_boutique_profile_with_stats
+
+        enriched_profile = await enrich_boutique_profile_with_stats(
+            db, boutique_profile, boutique_profile.boutique_id
+        )
+
         logger.info(
             f"Boutique profile updated successfully for user: {current_user.id}"
         )
-        return boutique_profile
+        return enriched_profile
     except HTTPException:
         raise
     except Exception as e:

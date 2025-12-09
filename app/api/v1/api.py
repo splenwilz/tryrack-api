@@ -8,9 +8,11 @@ from fastapi import APIRouter
 
 from app.api.v1.routes import (
     auth,
+    boutique,
     catalog,
     health,
     image,
+    review,
     shop,
     task,
     user,
@@ -27,9 +29,11 @@ api_router = APIRouter(prefix=settings.API_V1_PREFIX)
 # Each route module is added as a sub-router
 api_router.include_router(auth.router)
 api_router.include_router(user.router)
+api_router.include_router(boutique.router)
 api_router.include_router(image.router)
 api_router.include_router(wardrobe.router)
 api_router.include_router(catalog.router)
+api_router.include_router(review.router)
 api_router.include_router(shop.router)
 api_router.include_router(virtual_try_on.router)
 api_router.include_router(task.router)

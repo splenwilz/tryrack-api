@@ -62,6 +62,14 @@ async def get_catalog_items(
         alias="status",
         description="Filter by status (active, inactive, out_of_stock, discontinued)",
     ),
+    boutique_id: Optional[int] = Query(
+        None,
+        description="Filter by boutique ID (to get all items from a specific boutique)",
+    ),
+    user_id: Optional[str] = Query(
+        None,
+        description="[Deprecated] Filter by boutique owner user ID. Use boutique_id instead.",
+    ),
     skip: int = Query(0, ge=0, description="Number of items to skip (for pagination)"),
     limit: int = Query(
         100, ge=1, le=1000, description="Maximum number of items to return"
@@ -70,6 +78,76 @@ async def get_catalog_items(
 ) -> List[CatalogItemResponse]:
     """
     Get catalog items for browsing.
+
+    **Filtering:**
+    - Filter by category (e.g., "jeans", "shirt")
+    - Filter by brand
+    - Filter by status (active, inactive, out_of_stock, discontinued)
+    - Filter by boutique ID (boutique_id) to get all items from a specific boutique
+    - Filter by boutique owner (user_id) - deprecated, use boutique_id instead
+    - Pagination with skip/limit
+    """
+    catalog_service = CatalogService()
+    try:
+        items = await catalog_service.get_catalog_items(
+            db,
+            category=category,
+            brand=brand,
+            status=status_filter,
+            boutique_id=boutique_id,
+            user_id=user_id,  # For backward compatibility
+            skip=skip,
+            limit=limit,
+        )
+        logger.info(f"Retrieved {len(items)} catalog items")
+        return items
+    except Exception as e:
+        logger.error(f"Unexpected error getting catalog items: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving catalog items",
+        ) from e
+
+
+@router.get(
+    "/my-items",
+    response_model=List[CatalogItemResponse],
+    summary="Get my boutique's catalog items",
+    description="Get all catalog items for the authenticated boutique owner.",
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"description": "Catalog items retrieved successfully"},
+        401: {"description": "Unauthorized - authentication required"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def get_my_catalog_items(
+    category: Optional[str] = Query(
+        None, description="Filter by category (e.g., 'jeans', 'shirt', 'dress')"
+    ),
+    brand: Optional[str] = Query(
+        None, description="Filter by brand name"
+    ),
+    status_filter: Optional[CatalogItemStatus] = Query(
+        None,
+        alias="status",
+        description="Filter by status (active, inactive, out_of_stock, discontinued)",
+    ),
+    skip: int = Query(0, ge=0, description="Number of items to skip (for pagination)"),
+    limit: int = Query(
+        100, ge=1, le=1000, description="Maximum number of items to return"
+    ),
+    current_user: WorkOSUserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[CatalogItemResponse]:
+    """
+    Get all catalog items for the authenticated boutique owner.
+
+    This endpoint automatically filters items to only return those owned by the authenticated user's boutique.
+
+    **Authorization:**
+    - Requires authentication
+    - Only returns items owned by the authenticated user's boutique
 
     **Filtering:**
     - Filter by category (e.g., "jeans", "shirt")
@@ -84,13 +162,19 @@ async def get_catalog_items(
             category=category,
             brand=brand,
             status=status_filter,
+            user_id=current_user.id,  # Automatically filter by authenticated user's boutique
             skip=skip,
             limit=limit,
         )
-        logger.info(f"Retrieved {len(items)} catalog items")
+        logger.info(
+            f"Retrieved {len(items)} catalog items for boutique owner: {current_user.id}"
+        )
         return items
     except Exception as e:
-        logger.error(f"Unexpected error getting catalog items: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error getting catalog items for user {current_user.id}: {type(e).__name__}: {e}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while retrieving catalog items",

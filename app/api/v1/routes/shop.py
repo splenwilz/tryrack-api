@@ -129,7 +129,7 @@ async def get_shop_items(
         for item in items:
             # Get boutique information
             boutique_profile = (
-                item.user.boutique_profile if item.user else None
+                item.boutique.boutique_profile if item.boutique else None
             )
             boutique_name = (
                 boutique_profile.business_name if boutique_profile else None

@@ -12,7 +12,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.schemas.catalog import CatalogItemCreate, CatalogItemUpdate, CatalogReviewCreate, CatalogReviewUpdate
+from app.api.v1.schemas.catalog import (
+    CatalogItemCreate,
+    CatalogItemUpdate,
+    CatalogReviewCreate,
+    CatalogReviewUpdate,
+)
+from app.models.boutique import Boutique
 from app.models.catalog import CatalogItem, CatalogItemStatus, CatalogReview
 
 logger = logging.getLogger(__name__)
@@ -34,9 +40,7 @@ class CatalogService:
         Returns:
             Catalog item if found, None otherwise
         """
-        result = await db.execute(
-            select(CatalogItem).where(CatalogItem.id == item_id)
-        )
+        result = await db.execute(select(CatalogItem).where(CatalogItem.id == item_id))
         return result.scalar_one_or_none()
 
     async def get_catalog_items(
@@ -45,6 +49,10 @@ class CatalogService:
         category: Optional[str] = None,
         brand: Optional[str] = None,
         status: Optional[CatalogItemStatus] = None,
+        boutique_id: Optional[int] = None,
+        user_id: Optional[
+            str
+        ] = None,  # For backward compatibility - gets boutique_id from user_id
         skip: int = 0,
         limit: int = 100,
     ) -> List[CatalogItem]:
@@ -56,6 +64,8 @@ class CatalogService:
             category: Optional category filter
             brand: Optional brand filter
             status: Optional status filter
+            boutique_id: Optional boutique ID filter (preferred)
+            user_id: Optional boutique owner user ID filter (converted to boutique_id)
             skip: Number of items to skip (for pagination)
             limit: Maximum number of items to return
 
@@ -72,6 +82,21 @@ class CatalogService:
 
         if status:
             query = query.where(CatalogItem.status == status.value)
+
+        # Handle boutique_id or user_id (for backward compatibility)
+        if boutique_id:
+            query = query.where(CatalogItem.boutique_id == boutique_id)
+        elif user_id:
+            # Get boutique_id from user_id
+            boutique_result = await db.execute(
+                select(Boutique).where(Boutique.owner_id == user_id)
+            )
+            boutique = boutique_result.scalar_one_or_none()
+            if boutique:
+                query = query.where(CatalogItem.boutique_id == boutique.id)
+            else:
+                # Return empty list if no boutique found
+                return []
 
         query = query.order_by(CatalogItem.created_at.desc()).offset(skip).limit(limit)
 
@@ -95,10 +120,20 @@ class CatalogService:
         Raises:
             ValueError: If validation fails
         """
+        # Get boutique by owner_id
+        boutique_result = await db.execute(
+            select(Boutique).where(Boutique.owner_id == user_id)
+        )
+        boutique = boutique_result.scalar_one_or_none()
+        if not boutique:
+            raise ValueError(
+                f"No boutique found for user {user_id}. Please complete boutique onboarding first."
+            )
+
         item_dict = item_data.model_dump(exclude_unset=True)
 
-        # Set user_id (boutique owner) - required for linking item to boutique
-        item_dict["user_id"] = user_id
+        # Set boutique_id - required for linking item to boutique
+        item_dict["boutique_id"] = boutique.id
 
         # Set default status if not provided
         if "status" not in item_dict or item_dict["status"] is None:
@@ -117,12 +152,18 @@ class CatalogService:
 
         try:
             await db.flush()
-            logger.info(f"Created catalog item '{catalog_item.name}' (ID: {catalog_item.id})")
+            logger.info(
+                f"Created catalog item '{catalog_item.name}' (ID: {catalog_item.id})"
+            )
             return catalog_item
         except IntegrityError as e:
             await db.rollback()
-            logger.error("Failed to create catalog item due to database error", exc_info=True)
-            raise ValueError("Failed to create catalog item due to database constraints") from e
+            logger.error(
+                "Failed to create catalog item due to database error", exc_info=True
+            )
+            raise ValueError(
+                "Failed to create catalog item due to database constraints"
+            ) from e
 
     async def update_catalog_item(
         self,
@@ -149,10 +190,14 @@ class CatalogService:
         if not catalog_item:
             return None
 
-        # Verify ownership
-        if catalog_item.user_id != user_id:
+        # Verify ownership via boutique
+        boutique_result = await db.execute(
+            select(Boutique).where(Boutique.owner_id == user_id)
+        )
+        boutique = boutique_result.scalar_one_or_none()
+        if not boutique or catalog_item.boutique_id != boutique.id:
             logger.warning(
-                f"User {user_id} attempted to update catalog item {item_id} owned by {catalog_item.user_id}"
+                f"User {user_id} attempted to update catalog item {item_id} not owned by their boutique"
             )
             return None
 
@@ -178,7 +223,9 @@ class CatalogService:
                     raise ValueError("Discount price must be less than regular price")
 
         # Convert enum to string value for status field
-        if "status" in update_data and isinstance(update_data["status"], CatalogItemStatus):
+        if "status" in update_data and isinstance(
+            update_data["status"], CatalogItemStatus
+        ):
             update_data["status"] = update_data["status"].value
 
         for field, value in update_data.items():
@@ -193,8 +240,12 @@ class CatalogService:
             return catalog_item
         except IntegrityError as e:
             await db.rollback()
-            logger.error("Failed to update catalog item due to database error", exc_info=True)
-            raise ValueError("Failed to update catalog item due to database constraints") from e
+            logger.error(
+                "Failed to update catalog item due to database error", exc_info=True
+            )
+            raise ValueError(
+                "Failed to update catalog item due to database constraints"
+            ) from e
 
     async def delete_catalog_item(
         self, db: AsyncSession, item_id: int, user_id: str
@@ -214,10 +265,14 @@ class CatalogService:
         if not catalog_item:
             return False
 
-        # Verify ownership
-        if catalog_item.user_id != user_id:
+        # Verify ownership via boutique
+        boutique_result = await db.execute(
+            select(Boutique).where(Boutique.owner_id == user_id)
+        )
+        boutique = boutique_result.scalar_one_or_none()
+        if not boutique or catalog_item.boutique_id != boutique.id:
             logger.warning(
-                f"User {user_id} attempted to delete catalog item {item_id} owned by {catalog_item.user_id}"
+                f"User {user_id} attempted to delete catalog item {item_id} not owned by their boutique"
             )
             return False
 
@@ -252,8 +307,12 @@ class CatalogService:
             return result.scalar_one_or_none()
         except IntegrityError as e:
             await db.rollback()
-            logger.error("Failed to increment views due to database error", exc_info=True)
-            raise ValueError("Failed to increment views due to database constraints") from e
+            logger.error(
+                "Failed to increment views due to database error", exc_info=True
+            )
+            raise ValueError(
+                "Failed to increment views due to database constraints"
+            ) from e
 
     # Review methods
     async def get_review(
@@ -311,21 +370,21 @@ class CatalogService:
             raise ValueError("Catalog item not found")
 
         review_dict = review_data.model_dump()
-        review = CatalogReview(
-            catalog_item_id=item_id,
-            user_id=user_id,
-            **review_dict
-        )
+        review = CatalogReview(catalog_item_id=item_id, user_id=user_id, **review_dict)
         db.add(review)
 
         try:
             await db.flush()
-            logger.info(f"Created review {review.id} for catalog item {item_id} by user {user_id}")
+            logger.info(
+                f"Created review {review.id} for catalog item {item_id} by user {user_id}"
+            )
             return review
         except IntegrityError as e:
             await db.rollback()
             logger.error("Failed to create review due to database error", exc_info=True)
-            raise ValueError("Failed to create review due to database constraints") from e
+            raise ValueError(
+                "Failed to create review due to database constraints"
+            ) from e
 
     async def update_review(
         self,
@@ -363,7 +422,9 @@ class CatalogService:
         except IntegrityError as e:
             await db.rollback()
             logger.error("Failed to update review due to database error", exc_info=True)
-            raise ValueError("Failed to update review due to database constraints") from e
+            raise ValueError(
+                "Failed to update review due to database constraints"
+            ) from e
 
     async def delete_review(
         self, db: AsyncSession, review_id: int, user_id: str
@@ -384,6 +445,6 @@ class CatalogService:
             return False
 
         await db.delete(review)
+        await db.flush()
         logger.info(f"Deleted review {review_id}")
         return True
-

@@ -398,7 +398,6 @@ async def update_look(
         404: {
             "description": "Boutique look not found or you don't have permission to delete it"
         },
-        404: {"description": "Boutique look not found"},
         500: {"description": "Internal server error"},
     },
 )

@@ -18,6 +18,7 @@ from app.api.v1.schemas.user import (
     UserUpdate,
 )
 from app.core.config import settings
+from app.models.boutique import Boutique
 from app.models.user import BoutiqueProfile, User, UserProfile
 
 logger = logging.getLogger(__name__)
@@ -363,17 +364,25 @@ class UserService:
         self, db: AsyncSession, user_id: str
     ) -> Optional[BoutiqueProfile]:
         """
-        Get boutique profile by user ID.
+        Get boutique profile by user ID (owner).
 
         Args:
             db: Database session
-            user_id: ID of the user
+            user_id: ID of the user (boutique owner)
 
         Returns:
             BoutiqueProfile if found, None otherwise
         """
+        # Get boutique by owner_id, then get profile
+        boutique_result = await db.execute(
+            select(Boutique).where(Boutique.owner_id == user_id)
+        )
+        boutique = boutique_result.scalar_one_or_none()
+        if not boutique:
+            return None
+
         result = await db.execute(
-            select(BoutiqueProfile).where(BoutiqueProfile.user_id == user_id)
+            select(BoutiqueProfile).where(BoutiqueProfile.boutique_id == boutique.id)
         )
         return result.scalar_one_or_none()
 
@@ -406,23 +415,38 @@ class UserService:
             )
             raise ValueError(f"User with ID '{user_id}' does not exist")
 
-        # Check if profile already exists
+        # Check if user already has a boutique (from migration or previous creation)
+        existing_boutique_result = await db.execute(
+            select(Boutique).where(Boutique.owner_id == user_id)
+        )
+        existing_boutique = existing_boutique_result.scalar_one_or_none()
+
+        if existing_boutique:
+            # Boutique already exists (from migration), use it
+            boutique = existing_boutique
+            logger.info(f"Using existing boutique {boutique.id} for user: {user_id}")
+        else:
+            # Create Boutique entity first (industry standard: separate boutique from user)
+            boutique = Boutique(owner_id=user_id)
+            db.add(boutique)
+            await db.flush()  # Flush to get the boutique.id
+
+        # Check if boutique profile already exists (from migration or previous creation)
         existing_profile = await self.get_boutique_profile(db, user_id)
         if existing_profile:
-            logger.warning(f"Boutique profile already exists for user: {user_id}")
-            raise IntegrityError(
-                statement="INSERT INTO boutique_profiles",
-                params=None,
-                orig=Exception(
-                    f"duplicate key value violates unique constraint "
-                    f'"uq_boutique_profiles_user_id" - profile already exists for user {user_id}'
-                ),
+            # Profile already exists, update it instead
+            logger.info(
+                f"Boutique profile already exists for user {user_id}, updating instead"
+            )
+            return await self.update_boutique_profile(
+                db, user_id, boutique_profile_data
             )
 
         # Only include fields that were explicitly set
         profile_data = boutique_profile_data.model_dump(exclude_unset=True)
 
-        boutique_profile = BoutiqueProfile(user_id=user_id, **profile_data)
+        # Create BoutiqueProfile linked to the Boutique
+        boutique_profile = BoutiqueProfile(boutique_id=boutique.id, **profile_data)
 
         db.add(boutique_profile)
 
@@ -433,10 +457,7 @@ class UserService:
         except IntegrityError as e:
             # Handle race condition
             error_str = str(e.orig) if hasattr(e, "orig") else str(e)
-            if (
-                "uq_boutique_profiles_user_id" in error_str
-                or "unique constraint" in error_str.lower()
-            ):
+            if "unique constraint" in error_str.lower():
                 logger.warning(
                     f"Boutique profile creation race condition detected for user: {user_id}"
                 )

@@ -24,6 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
 if TYPE_CHECKING:
+    from app.models.boutique import Boutique
     from app.models.user import User
 
 
@@ -72,17 +73,21 @@ class CatalogItem(Base):
         Index(
             "ix_catalog_items_category_status", "category", "status"
         ),  # Composite index for common query pattern
-        Index("ix_catalog_items_user_id", "user_id"),  # For filtering by boutique owner
+        # Note: boutique_id index is created automatically via index=True on the column
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Relationship to boutique owner (User)
-    user_id: Mapped[str] = mapped_column(
-        String,
-        ForeignKey("users.id", ondelete="CASCADE"),
+    # Relationship to Boutique
+    boutique_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("boutiques.id", ondelete="CASCADE"),
         nullable=False,
-        comment="Boutique owner user ID - links catalog item to boutique",
+        index=True,
+        comment="Boutique ID - links catalog item to boutique",
+    )
+    boutique: Mapped["Boutique"] = relationship(
+        "Boutique", back_populates="catalog_items"
     )
 
     # Core product information
@@ -205,9 +210,6 @@ class CatalogItem(Base):
     )
 
     # Relationships
-    # Many-to-one: catalog item belongs to a boutique owner (User)
-    user: Mapped["User"] = relationship("User", back_populates="catalog_items")
-
     # One-to-many: one catalog item can have many reviews
     reviews: Mapped[list["CatalogReview"]] = relationship(
         "CatalogReview",

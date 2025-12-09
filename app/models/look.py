@@ -26,6 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
 if TYPE_CHECKING:
+    from app.models.boutique import Boutique
     from app.models.user import User
 
 
@@ -51,25 +52,28 @@ class BoutiqueLook(Base):
     # Indexes for common queries
     __table_args__ = (
         Index(
-            "ix_boutique_looks_user_id", "user_id"
-        ),  # For filtering by boutique owner
+            "ix_boutique_looks_boutique_id", "boutique_id"
+        ),  # For filtering by boutique
         Index("ix_boutique_looks_style", "style"),  # For filtering by style
         Index("ix_boutique_looks_is_featured", "is_featured"),  # For featured looks
         Index(
-            "ix_boutique_looks_user_featured", "user_id", "is_featured"
+            "ix_boutique_looks_boutique_featured", "boutique_id", "is_featured"
         ),  # Composite index for boutique's featured looks
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Relationship to boutique owner (User)
-    user_id: Mapped[str] = mapped_column(
-        String,
-        ForeignKey("users.id", ondelete="CASCADE"),
+    # Relationship to Boutique
+    boutique_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("boutiques.id", ondelete="CASCADE"),
         nullable=False,
-        comment="Boutique owner user ID - links look to boutique",
+        index=True,
+        comment="Boutique ID - links look to boutique",
     )
-    user: Mapped["User"] = relationship("User", back_populates="boutique_looks")
+    boutique: Mapped["Boutique"] = relationship(
+        "Boutique", back_populates="boutique_looks"
+    )
 
     # Look information
     title: Mapped[str] = mapped_column(

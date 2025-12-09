@@ -289,3 +289,76 @@ async def get_current_user(
             detail=f"Authentication failed: {str(e)}",
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
+
+
+def clear_user_cache():
+    """Clear the user cache (useful for testing or cache invalidation)."""
+    _user_cache.clear()
+
+
+async def get_admin_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> WorkOSUserResponse:
+    """
+    Dependency to get the current authenticated admin user.
+
+    Validates the JWT access token and checks if the user has admin role.
+    This is a placeholder implementation - you should implement proper admin role checking
+    based on your WorkOS organization/role configuration.
+
+    Usage:
+        @router.post("/admin/approve")
+        async def admin_route(admin_user = Depends(get_admin_user)):
+            return {"message": "Admin access granted"}
+
+    Args:
+        credentials: HTTPAuthorizationCredentials containing the Bearer token
+
+    Returns:
+        WorkOSUserResponse: The authenticated admin user
+
+    Raises:
+        HTTPException: 401 if token is invalid or missing
+        HTTPException: 403 if user is not an admin
+    """
+    # Get the current user (validates authentication)
+    current_user = await get_current_user(credentials)
+
+    # TODO: Implement proper admin role checking
+    # For now, we'll check if the user has admin role in the token claims
+    # You may need to adjust this based on your WorkOS organization setup
+    auth_service = get_auth_service()
+    try:
+        access_token = credentials.credentials
+        session_data = await auth_service.verify_session(access_token)
+
+        # Check for admin role in token claims
+        # WorkOS tokens may have 'role' or 'roles' fields
+        role = session_data.get("role")
+        roles = session_data.get("roles", [])
+
+        # Check if user is admin (adjust based on your role naming)
+        is_admin = (
+            role == "admin" or "admin" in roles or "Admin" in roles or "ADMIN" in roles
+        )
+
+        if not is_admin:
+            logger.warning(
+                f"Non-admin user {current_user.id} attempted to access admin endpoint"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required",
+            )
+
+        logger.debug(f"Admin access granted to user {current_user.id}")
+        return current_user
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking admin status: {e}", exc_info=True)
+        # If we can't verify admin status, deny access
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unable to verify admin status",
+        ) from e

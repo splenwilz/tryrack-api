@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.schemas.look import BoutiqueLookCreate, BoutiqueLookUpdate
+from app.models.boutique import Boutique
 from app.models.catalog import CatalogItem
 from app.models.look import BoutiqueLook
 
@@ -36,14 +37,19 @@ class LookService:
         Returns:
             Boutique look if found, None otherwise
         """
+        # Build query with optional user_id filter
         query = select(BoutiqueLook).where(BoutiqueLook.id == look_id)
 
-        # Filter by boutique owner if provided
+        # If user_id provided, join with Boutique to filter by owner
         if user_id:
-            query = query.where(BoutiqueLook.user_id == user_id)
+            query = query.join(Boutique, BoutiqueLook.boutique_id == Boutique.id).where(
+                Boutique.owner_id == user_id
+            )
 
         result = await db.execute(query)
-        return result.scalar_one_or_none()
+        look = result.scalar_one_or_none()
+
+        return look
 
     async def get_looks(
         self,
@@ -71,7 +77,10 @@ class LookService:
         query = select(BoutiqueLook)
 
         if user_id:
-            query = query.where(BoutiqueLook.user_id == user_id)
+            # Join with Boutique to filter by owner_id
+            query = query.join(Boutique, BoutiqueLook.boutique_id == Boutique.id).where(
+                Boutique.owner_id == user_id
+            )
 
         if style:
             query = query.where(BoutiqueLook.style == style)
@@ -101,19 +110,29 @@ class LookService:
         Raises:
             ValueError: If validation fails or database constraint violation
         """
+        # Get boutique by owner_id
+        boutique_result = await db.execute(
+            select(Boutique).where(Boutique.owner_id == user_id)
+        )
+        boutique = boutique_result.scalar_one_or_none()
+        if not boutique:
+            raise ValueError(
+                f"No boutique found for user {user_id}. Please complete boutique onboarding first."
+            )
+
         look_dict = look_data.model_dump(exclude_unset=True)
 
-        # Set user_id (boutique owner) - required for linking look to boutique
-        look_dict["user_id"] = user_id
+        # Set boutique_id - required for linking look to boutique
+        look_dict["boutique_id"] = boutique.id
 
-        # Validate that all product_ids exist and belong to the boutique owner
+        # Validate that all product_ids exist and belong to the boutique
         if "product_ids" in look_dict and look_dict["product_ids"]:
             items = await self.get_catalog_items_by_ids(db, look_dict["product_ids"])
             if len(items) != len(look_dict["product_ids"]):
                 raise ValueError("One or more product IDs are invalid or do not exist")
             # Verify ownership
             for item in items:
-                if item.user_id != user_id:
+                if item.boutique_id != boutique.id:
                     raise ValueError(
                         "One or more products do not belong to your boutique"
                     )
@@ -166,6 +185,16 @@ class LookService:
         # Update only provided fields
         update_dict = look_data.model_dump(exclude_unset=True)
 
+        # Get boutique for ownership verification
+        boutique_result = await db.execute(
+            select(Boutique).where(Boutique.owner_id == user_id)
+        )
+        boutique = boutique_result.scalar_one_or_none()
+        if not boutique:
+            raise ValueError(
+                f"No boutique found for user {user_id}. Please complete boutique onboarding first."
+            )
+
         # Validate product_ids if they're being updated
         if "product_ids" in update_dict and update_dict["product_ids"]:
             items = await self.get_catalog_items_by_ids(db, update_dict["product_ids"])
@@ -173,7 +202,7 @@ class LookService:
                 raise ValueError("One or more product IDs are invalid or do not exist")
             # Verify ownership
             for item in items:
-                if item.user_id != user_id:
+                if item.boutique_id != boutique.id:
                     raise ValueError(
                         "One or more products do not belong to your boutique"
                     )

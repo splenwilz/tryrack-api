@@ -142,11 +142,11 @@ class BoutiqueLookResponse(BoutiqueLookBase):
     """
     Schema for boutique look response.
 
-    Includes all base fields plus ID, timestamps, user_id, total_price, and products.
+    Includes all base fields plus ID, timestamps, boutique_id, total_price, and products.
     """
 
     id: int = Field(..., description="Look ID")
-    user_id: str = Field(..., description="Boutique owner user ID")
+    boutique_id: int = Field(..., description="Boutique ID (links to Boutique entity)")
     created_at: datetime = Field(..., description="Timestamp when look was created")
     updated_at: datetime = Field(..., description="Timestamp when look was last updated")
     total_price: Optional[int] = Field(
